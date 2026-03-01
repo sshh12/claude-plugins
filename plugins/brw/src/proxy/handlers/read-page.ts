@@ -48,6 +48,18 @@ const TREE_SCRIPT = `
     if (['button', 'a', 'label', 'legend', 'caption', 'figcaption', 'summary', 'option'].includes(tag)) {
       return el.textContent?.trim().substring(0, 200) || '';
     }
+    // For elements with interactive ARIA roles (div[role="button"], etc.), use textContent
+    const elRole = el.getAttribute('role');
+    if (elRole && ['button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+        'tab', 'option', 'treeitem', 'switch', 'combobox', 'textbox'].includes(elRole)) {
+      const text = el.textContent?.trim().substring(0, 200);
+      if (text) return text;
+    }
+    // Last resort: check first child's aria-label (common in Google apps)
+    for (const child of el.children) {
+      const childLabel = child.getAttribute && child.getAttribute('aria-label');
+      if (childLabel) return childLabel;
+    }
     return '';
   }
 
@@ -150,10 +162,15 @@ const TREE_SCRIPT = `
       }
     }
 
-    // Search filter
+    // Search filter — match name, aria-label, aria-description, and textContent
     if (search) {
       const searchLower = search.toLowerCase();
-      const matchesSelf = name.toLowerCase().includes(searchLower) || (el.textContent || '').toLowerCase().includes(searchLower);
+      const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+      const ariaDesc = (el.getAttribute('aria-description') || '').toLowerCase();
+      const matchesSelf = name.toLowerCase().includes(searchLower) ||
+        ariaLabel.includes(searchLower) ||
+        ariaDesc.includes(searchLower) ||
+        (el.textContent || '').toLowerCase().includes(searchLower);
       if (!matchesSelf && children.length === 0) return null;
     }
 
@@ -192,7 +209,7 @@ const TREE_SCRIPT = `
   }
 
   const root = options.rootEl || document.body;
-  const tree = buildTree(root, 0, options.maxDepth || 15, options.filter || 'all', options.search || '');
+  const tree = buildTree(root, 0, options.maxDepth || 30, options.filter || 'all', options.search || '');
   return JSON.stringify({ tree, refCount: window.__brwRefCounter });
 })
 `;
@@ -219,13 +236,13 @@ export async function handleReadPage(
     expression = `${TREE_SCRIPT}({
       rootEl: window.__brwElementMap?.get(${JSON.stringify(params.ref)})?.deref(),
       filter: ${JSON.stringify(params.filter || 'all')},
-      maxDepth: ${params.depth || 15},
+      maxDepth: ${params.depth || 30},
       search: ${JSON.stringify(params.search || '')}
     })`;
   } else {
     expression = `${TREE_SCRIPT}({
       filter: ${JSON.stringify(params.filter || 'all')},
-      maxDepth: ${params.depth || 15},
+      maxDepth: ${params.depth || 30},
       search: ${JSON.stringify(params.search || '')}
     })`;
   }

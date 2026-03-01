@@ -124,6 +124,7 @@ async function relaunchChrome(): Promise<void> {
     setupChromeExitHandler();
     const downloadDir = join(config.screenshotDir, 'downloads');
     cdp = new CDPManager(config.cdpPort, downloadDir);
+    cdp.setViewport(config.windowWidth, config.windowHeight);
     await cdp.connect();
 
     // Set viewport and clear NTP on relaunched Chrome
@@ -364,6 +365,7 @@ async function main() {
   // Connect to Chrome via CDP
   console.error('[brw-proxy] Connecting to Chrome CDP...');
   cdp = new CDPManager(config.cdpPort, downloadDir);
+  cdp.setViewport(config.windowWidth, config.windowHeight);
   await cdp.connect();
   console.error('[brw-proxy] Connected to Chrome CDP');
 

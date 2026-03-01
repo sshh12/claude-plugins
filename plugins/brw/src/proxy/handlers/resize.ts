@@ -22,7 +22,7 @@ export async function handleResize(
   await client.Emulation.setDeviceMetricsOverride({
     width: params.width,
     height: params.height,
-    deviceScaleFactor: 0, // 0 means use actual device scale factor
+    deviceScaleFactor: 1,
     mobile: false,
   });
 

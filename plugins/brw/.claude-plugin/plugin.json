@@ -1,6 +1,6 @@
 {
   "name": "brw",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Browser automation for Claude Code via Chrome DevTools Protocol",
   "author": {
     "name": "shrivu"

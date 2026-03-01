@@ -9,7 +9,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.2.1')
+  .version('0.3.0')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--text', 'Output as plain text instead of JSON')

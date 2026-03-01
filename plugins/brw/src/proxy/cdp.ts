@@ -61,12 +61,22 @@ export class CDPManager {
   private activeTabId: string | null = null;
   private cdpPort: number;
   private downloadDir: string;
+  private viewportWidth: number = 0;
+  private viewportHeight: number = 0;
   private connectRetries = 0;
   private maxConnectRetries = 30; // 30 * 1s = 30s max wait for Chrome
 
   constructor(cdpPort: number, downloadDir?: string) {
     this.cdpPort = cdpPort;
     this.downloadDir = downloadDir || '/tmp/brw-screenshots/downloads';
+  }
+
+  /**
+   * Set default viewport dimensions applied to every new tab.
+   */
+  setViewport(width: number, height: number): void {
+    this.viewportWidth = width;
+    this.viewportHeight = height;
   }
 
   async connect(): Promise<void> {
@@ -305,6 +315,20 @@ export class CDPManager {
     });
 
     this.tabs.set(targetId, state);
+
+    // Apply viewport dimensions to every tab
+    if (this.viewportWidth > 0 && this.viewportHeight > 0) {
+      try {
+        await client.Emulation.setDeviceMetricsOverride({
+          width: this.viewportWidth,
+          height: this.viewportHeight,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+      } catch {
+        // ignore — older Chrome versions may not support this
+      }
+    }
 
     // Get initial page info
     try {
