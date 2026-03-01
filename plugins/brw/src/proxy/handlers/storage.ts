@@ -1,5 +1,6 @@
 import type { CDPManager } from '../cdp.js';
 import type { ApiResponse } from '../../shared/types.js';
+import { audit } from '../logger.js';
 
 export async function handleStorage(
   cdp: CDPManager,
@@ -35,6 +36,7 @@ export async function handleStorage(
       expression: `${storageType}.setItem(${JSON.stringify(params.key)}, ${JSON.stringify(params.value)})`,
       returnByValue: true,
     });
+    audit('storage', { action: 'set', key: params.key, storageType });
     return { ok: true };
   }
 
@@ -46,6 +48,7 @@ export async function handleStorage(
       expression: `${storageType}.removeItem(${JSON.stringify(params.key)})`,
       returnByValue: true,
     });
+    audit('storage', { action: 'delete', key: params.key, storageType });
     return { ok: true };
   }
 
@@ -71,6 +74,7 @@ export async function handleStorage(
       expression: `${storageType}.clear()`,
       returnByValue: true,
     });
+    audit('storage', { action: 'clear', storageType });
     return { ok: true };
   }
 

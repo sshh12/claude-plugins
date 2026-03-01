@@ -11,8 +11,13 @@ export interface BrwConfig {
   windowWidth: number;
   windowHeight: number;
   allowedUrls: string[];
+  blockedUrls: string[];
+  disabledCommands: string[];
+  auditLog: string | null;
+  allowedPaths: string[] | null;
   autoScreenshot: boolean;
   logFile: string;
+  chromeLaunch: boolean;
 }
 
 export type ConfigSource = 'env' | 'repo' | 'user' | 'default';
@@ -74,6 +79,8 @@ export const ErrorCode = {
   JS_ERROR: 'JS_ERROR',
   INTERCEPT_ERROR: 'INTERCEPT_ERROR',
   PROFILE_NOT_FOUND: 'PROFILE_NOT_FOUND',
+  COMMAND_DISABLED: 'COMMAND_DISABLED',
+  PATH_BLOCKED: 'PATH_BLOCKED',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

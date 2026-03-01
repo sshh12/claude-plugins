@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { appendFileSync, readFileSync, writeFileSync, existsSync, openSync, closeSync } from 'fs';
 
 export interface Logger {
   info: (message: string, meta?: Record<string, unknown>) => void;
@@ -64,6 +64,39 @@ export function getGlobalLogger(): Logger {
     };
   }
   return globalLogger;
+}
+
+// ---- Audit Logging ----
+
+let auditLogPath: string | null = null;
+let auditFileCreated = false;
+
+export function setAuditLog(path: string | null): void {
+  auditLogPath = path;
+  auditFileCreated = false;
+}
+
+export function audit(event: string, data: Record<string, unknown>): void {
+  if (!auditLogPath) return;
+
+  const entry = {
+    timestamp: new Date().toISOString(),
+    event,
+    ...data,
+  };
+
+  try {
+    const line = JSON.stringify(entry) + '\n';
+    if (!auditFileCreated && !existsSync(auditLogPath)) {
+      // Create file with restrictive permissions (owner-only read/write)
+      const fd = openSync(auditLogPath, 'a', 0o600);
+      closeSync(fd);
+      auditFileCreated = true;
+    }
+    appendFileSync(auditLogPath, line);
+  } catch {
+    // Best effort — audit log may not be writable
+  }
 }
 
 export function readLogTail(logFile: string, lines: number = 50): string {

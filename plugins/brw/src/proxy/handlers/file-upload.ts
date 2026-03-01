@@ -3,6 +3,8 @@ import type { BrwConfig, ApiResponse } from '../../shared/types.js';
 import { existsSync } from 'fs';
 import { basename } from 'path';
 import { handleScreenshot } from './screenshot.js';
+import { checkAllowedPath } from '../../shared/config.js';
+import { audit } from '../logger.js';
 
 export async function handleFileUpload(
   cdp: CDPManager,
@@ -22,8 +24,15 @@ export async function handleFileUpload(
     return { ok: false, error: 'At least one file path is required', code: 'INVALID_ARGUMENT' };
   }
 
-  // Validate files exist
+  // Validate file paths
   for (const filePath of params.files) {
+    if (!checkAllowedPath(filePath, config.allowedPaths)) {
+      return {
+        ok: false,
+        error: `File path ${filePath} is not in the allowed paths`,
+        code: 'PATH_BLOCKED',
+      };
+    }
     if (!existsSync(filePath)) {
       return {
         ok: false,
@@ -93,6 +102,8 @@ export async function handleFileUpload(
 
   const page = await cdp.getPageInfo(tabId);
   const { ok: _ok, ...screenshotData } = await handleScreenshot(cdp, config, { tab: tabId, noScreenshot: params.noScreenshot });
+
+  audit('file-upload', { files: params.files.map((f) => basename(f)) });
 
   return {
     ok: true,

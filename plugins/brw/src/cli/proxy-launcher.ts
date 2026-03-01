@@ -1,5 +1,7 @@
 import { spawn } from 'child_process';
+import { openSync, closeSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
+import { homedir, platform } from 'os';
 import http from 'http';
 import { readPidFile, isProcessRunning } from '../proxy/chrome.js';
 import type { ApiResponse } from '../shared/types.js';
@@ -65,30 +67,30 @@ export async function startProxy(
     process.stderr.write(`[brw] Port: ${port}\n`);
   }
 
-  // Spawn proxy as a detached process, capturing stderr for error reporting
+  // Redirect stderr to a file instead of piping — piping causes SIGPIPE
+  // death when the parent exits and the child writes to the broken pipe.
+  // Use the proxy log file so error output isn't lost.
+  const isLinux = platform() === 'linux';
+  const stderrLog = isLinux
+    ? join(homedir(), '.config', 'brw', 'brw-proxy-stderr.log')
+    : '/tmp/brw-proxy-stderr.log';
+  const stderrFd = openSync(stderrLog, 'w');
+
   const child = spawn('node', [proxyScript], {
     env,
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: ['ignore', 'ignore', debug ? 'inherit' : stderrFd],
     detached: true,
   });
 
   const pid = child.pid;
   if (!pid) {
+    closeSync(stderrFd);
     throw new Error('Failed to spawn proxy process');
   }
 
   if (debug) {
     process.stderr.write(`[brw] Proxy spawned with PID ${pid}\n`);
   }
-
-  // Collect stderr in case the process dies during startup
-  let stderrBuf = '';
-  child.stderr!.on('data', (chunk: Buffer) => {
-    stderrBuf += chunk.toString();
-    if (debug) {
-      process.stderr.write(chunk);
-    }
-  });
 
   // Watch for early exit
   let exited = false;
@@ -101,16 +103,18 @@ export async function startProxy(
   // Poll /health every 200ms for up to 10s
   const healthy = await pollHealth(port, 10000, 200);
 
+  // Close the fd in the parent (child has its own copy)
+  try { closeSync(stderrFd); } catch { /* ignore */ }
+
   if (healthy) {
-    // Server is up — detach stderr and unref
-    child.stderr!.destroy();
     child.unref();
     return { ok: true, pid, port } as ApiResponse;
   }
 
   // Server failed to start
   if (exited) {
-    const detail = stderrBuf.trim();
+    let detail = '';
+    try { detail = readFileSync(stderrLog, 'utf-8').trim(); } catch { /* ignore */ }
     throw new Error(
       `Proxy exited with code ${exitCode} during startup` +
       (detail ? `:\n${detail}` : '')
@@ -119,7 +123,8 @@ export async function startProxy(
 
   // Still running but not healthy — kill it
   try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
-  const detail = stderrBuf.trim();
+  let detail = '';
+  try { detail = readFileSync(stderrLog, 'utf-8').trim(); } catch { /* ignore */ }
   throw new Error(
     `Proxy failed to become healthy within 10s` +
     (detail ? `:\n${detail}` : '')

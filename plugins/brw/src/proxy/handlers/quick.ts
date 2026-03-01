@@ -9,6 +9,8 @@ import { handleListTabs, handleNewTab, handleSwitchTab } from './tabs.js';
 import { handleReadPage } from './read-page.js';
 import { handleFormInput } from './form-input.js';
 import { handleWaitFor } from './wait-for.js';
+import { checkUrlPolicy } from '../../shared/config.js';
+import { audit } from '../logger.js';
 
 interface QuickCommand {
   cmd: string;
@@ -232,6 +234,21 @@ export async function handleQuick(
               error: evalResult.exceptionDetails.text || 'JS error',
             });
           } else {
+            // Post-exec URL check
+            const needsUrlCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0);
+            if (needsUrlCheck) {
+              const jPage = await cdp.getPageInfo(tabId);
+              if (!checkUrlPolicy(jPage.url, config.allowedUrls, config.blockedUrls)) {
+                audit('js', { expression: args.substring(0, 200), urlAfter: jPage.url, blocked: true, source: 'quick' });
+                const jClient = cdp.getClient(tabId);
+                await jClient.Page.navigate({ url: 'about:blank' });
+                return {
+                  ok: false,
+                  error: `JS execution navigated to blocked URL: ${jPage.url}`,
+                  code: 'URL_BLOCKED',
+                };
+              }
+            }
             results.push({
               command: 'J',
               result: evalResult.result?.value,

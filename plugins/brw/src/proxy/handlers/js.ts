@@ -1,5 +1,7 @@
 import type { CDPManager } from '../cdp.js';
-import type { ApiResponse } from '../../shared/types.js';
+import type { ApiResponse, BrwConfig } from '../../shared/types.js';
+import { checkUrlPolicy } from '../../shared/config.js';
+import { audit } from '../logger.js';
 
 // Serializer function injected into the page to handle DOMRect, DOMPoint, etc.
 const DOM_SERIALIZER = `function(obj) {
@@ -35,8 +37,21 @@ export async function handleJs(
     expression: string;
     tab?: string;
     frame?: string;
-  }
+  },
+  config: BrwConfig
 ): Promise<ApiResponse> {
+  // Capture URL before execution for post-exec check
+  let urlBefore: string | undefined;
+  const needsUrlCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0);
+  if (needsUrlCheck) {
+    try {
+      const pageInfo = await cdp.getPageInfo(params.tab);
+      urlBefore = pageInfo.url;
+    } catch {
+      // best effort
+    }
+  }
+
   const tabId = params.tab;
   const client = cdp.getClient(tabId);
 
@@ -76,11 +91,15 @@ export async function handleJs(
 
   // Step 2: For primitives, use value directly
   if (remoteObj.type === 'undefined') {
+    const urlCheck = await postExecUrlCheck(cdp, config, params.tab, params.expression, urlBefore);
+    if (urlCheck) return urlCheck;
     return { ok: true, result: undefined };
   }
 
   if (remoteObj.type !== 'object' || remoteObj.subtype === 'null') {
     const resultValue = remoteObj.value !== undefined ? remoteObj.value : remoteObj.description ?? null;
+    const urlCheck = await postExecUrlCheck(cdp, config, params.tab, params.expression, urlBefore);
+    if (urlCheck) return urlCheck;
     return { ok: true, result: resultValue };
   }
 
@@ -102,6 +121,8 @@ export async function handleJs(
         return await handleJsFallback(client, params, evalOptions);
       }
 
+      const urlCheck = await postExecUrlCheck(cdp, config, params.tab, params.expression, urlBefore);
+      if (urlCheck) return urlCheck;
       return { ok: true, result: serialized.result?.value ?? null };
     } catch {
       // callFunctionOn failed — fall back
@@ -112,7 +133,49 @@ export async function handleJs(
 
   // No objectId — use value or description
   const resultValue = remoteObj.value !== undefined ? remoteObj.value : remoteObj.description ?? null;
+  const urlCheck = await postExecUrlCheck(cdp, config, params.tab, params.expression, urlBefore);
+  if (urlCheck) return urlCheck;
   return { ok: true, result: resultValue };
+}
+
+async function postExecUrlCheck(
+  cdp: CDPManager,
+  config: BrwConfig,
+  tabId: string | undefined,
+  expression: string,
+  urlBefore: string | undefined
+): Promise<ApiResponse | null> {
+  const needsCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0);
+  if (!needsCheck) return null;
+
+  try {
+    const page = await cdp.getPageInfo(tabId);
+    if (!checkUrlPolicy(page.url, config.allowedUrls, config.blockedUrls)) {
+      audit('js', {
+        expression: expression.substring(0, 200),
+        urlBefore: urlBefore || 'unknown',
+        urlAfter: page.url,
+        blocked: true,
+      });
+      // Navigate back to about:blank
+      const client = cdp.getClient(tabId);
+      await client.Page.navigate({ url: 'about:blank' });
+      return {
+        ok: false,
+        error: `JS execution navigated to blocked URL: ${page.url}`,
+        code: 'URL_BLOCKED',
+      };
+    }
+    audit('js', {
+      expression: expression.substring(0, 200),
+      urlBefore: urlBefore || 'unknown',
+      urlAfter: page.url,
+      blocked: false,
+    });
+  } catch {
+    // best effort
+  }
+  return null;
 }
 
 async function handleJsFallback(

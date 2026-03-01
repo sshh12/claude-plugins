@@ -1,6 +1,6 @@
 import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
-import { checkAllowedUrl } from '../../shared/config.js';
+import { checkUrlPolicy } from '../../shared/config.js';
 import { handleScreenshot } from './screenshot.js';
 import { waitForPage } from './navigate.js';
 import { getGlobalLogger } from '../logger.js';
@@ -24,11 +24,11 @@ export async function handleNewTab(
     if (!/^https?:\/\//i.test(url) && !url.startsWith('about:') && !url.startsWith('file:')) {
       url = 'https://' + url;
     }
-    // Check URL allowlist
-    if (!checkAllowedUrl(url, config.allowedUrls)) {
+    // Check URL policy
+    if (!checkUrlPolicy(url, config.allowedUrls, config.blockedUrls)) {
       return {
         ok: false,
-        error: `URL ${url} is not in the allowlist. Allowed: ${config.allowedUrls.join(', ')}`,
+        error: `URL ${url} is blocked by security policy`,
         code: 'URL_BLOCKED',
       };
     }

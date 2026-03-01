@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { PNG } from 'pngjs';
+import { platform } from 'os';
 import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
 
@@ -81,10 +82,10 @@ export async function handleScreenshot(
   const imgBuffer = resizeIfNeeded(rawBuffer as Buffer, 1568);
 
   // Save to disk
-  mkdirSync(config.screenshotDir, { recursive: true });
+  mkdirSync(config.screenshotDir, { recursive: true, mode: platform() === 'linux' ? 0o700 : undefined });
   const filename = `${Date.now()}.png`;
   const filepath = join(config.screenshotDir, filename);
-  writeFileSync(filepath, imgBuffer);
+  writeFileSync(filepath, imgBuffer, { mode: platform() === 'linux' ? 0o600 : undefined });
 
   return { ok: true, screenshot: filepath };
 }

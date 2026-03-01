@@ -73,7 +73,7 @@ export async function proxyRequest(
 export async function checkProxyHealth(port: number, timeout: number = 3): Promise<boolean> {
   try {
     const result = await proxyRequest('GET', '/health', {}, port, timeout, false);
-    return result.ok === true;
+    return result.ok === true || (typeof result === 'object' && result !== null && 'pid' in result);
   } catch {
     return false;
   }

@@ -162,14 +162,20 @@ const TREE_SCRIPT = `
       }
     }
 
-    // Search filter — match name, aria-label, aria-description; innerText only for interactive/semantic elements
+    // Search filter — match name, aria-label, aria-description, placeholder, title, value; innerText only for interactive/semantic elements
     if (search) {
       const searchLower = search.toLowerCase();
       const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
       const ariaDesc = (el.getAttribute('aria-description') || '').toLowerCase();
+      const placeholder = (el.placeholder || el.getAttribute('placeholder') || '').toLowerCase();
+      const title = (el.title || el.getAttribute('title') || '').toLowerCase();
+      const elValue = (el.value !== undefined ? String(el.value) : '').toLowerCase();
       let matchesSelf = name.toLowerCase().includes(searchLower) ||
         ariaLabel.includes(searchLower) ||
-        ariaDesc.includes(searchLower);
+        ariaDesc.includes(searchLower) ||
+        placeholder.includes(searchLower) ||
+        title.includes(searchLower) ||
+        elValue.includes(searchLower);
       if (!matchesSelf && (interactive || role !== 'generic')) {
         try {
           const text = el.innerText || '';
@@ -310,6 +316,21 @@ export async function handleReadPage(
   const maxChars = params.maxChars || 50000;
   if (tree.length > maxChars) {
     tree = tree.substring(0, maxChars) + '\n... (truncated)';
+  }
+
+  // Search diagnostics when no results found
+  if (params.search && (!data.tree || tree.trim() === '')) {
+    return {
+      ok: true,
+      tree: '',
+      refCount: data.refCount,
+      searchDiagnostics: {
+        query: params.search,
+        totalRefs: data.refCount,
+        searchFields: ['name', 'aria-label', 'aria-description', 'placeholder', 'title', 'value', 'innerText'],
+        hint: `No elements matched "${params.search}". Try a shorter query, or use read-page without --search to see all elements.`,
+      },
+    };
   }
 
   return { ok: true, tree, refCount: data.refCount };

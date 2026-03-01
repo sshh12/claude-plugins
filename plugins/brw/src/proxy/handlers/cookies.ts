@@ -1,5 +1,6 @@
 import type { CDPManager } from '../cdp.js';
 import type { ApiResponse } from '../../shared/types.js';
+import { audit } from '../logger.js';
 
 export async function handleCookies(
   cdp: CDPManager,
@@ -64,6 +65,7 @@ export async function handleCookies(
       url: pageInfo.url,
     });
 
+    audit('cookies', { action: 'set', name: params.name, domain });
     return { ok: true };
   }
 
@@ -89,6 +91,7 @@ export async function handleCookies(
       url: pageInfo.url,
     });
 
+    audit('cookies', { action: 'delete', name: params.name, domain });
     return { ok: true };
   }
 
@@ -102,6 +105,7 @@ export async function handleCookies(
         url: pageInfo.url,
       });
     }
+    audit('cookies', { action: 'clear' });
     return { ok: true };
   }
 

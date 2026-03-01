@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
+import { checkAllowedPath } from '../../shared/config.js';
 
 const PAPER_SIZES: Record<string, { width: number; height: number }> = {
   letter: { width: 8.5, height: 11 },
@@ -47,6 +48,14 @@ export async function handlePdf(
   const outputDir = config.screenshotDir;
   mkdirSync(outputDir, { recursive: true });
   const outputPath = params.output || join(outputDir, `${Date.now()}.pdf`);
+
+  if (params.output && !checkAllowedPath(params.output, config.allowedPaths)) {
+    return {
+      ok: false,
+      error: `Output path ${params.output} is not in the allowed paths`,
+      code: 'PATH_BLOCKED',
+    };
+  }
 
   writeFileSync(outputPath, buffer);
 

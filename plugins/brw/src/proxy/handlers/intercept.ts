@@ -1,7 +1,9 @@
 import { readFileSync, existsSync } from 'fs';
 import type { CDPManager } from '../cdp.js';
 import type { ApiResponse } from '../../shared/types.js';
-import { getGlobalLogger } from '../logger.js';
+import { checkAllowedPath } from '../../shared/config.js';
+import type { BrwConfig } from '../../shared/types.js';
+import { getGlobalLogger, audit } from '../logger.js';
 
 interface InterceptRule {
   id: string;
@@ -30,7 +32,8 @@ export async function handleIntercept(
     block?: boolean;
     ruleId?: string;
     tab?: string;
-  }
+  },
+  config: BrwConfig
 ): Promise<ApiResponse> {
   const tabId = params.tab || cdp.getActiveTabId() || '';
   const client = cdp.getClient(tabId || undefined);
@@ -53,6 +56,13 @@ export async function handleIntercept(
 
     // Read body from file if --body-file is specified
     if (params.bodyFile) {
+      if (!checkAllowedPath(params.bodyFile, config.allowedPaths)) {
+        return {
+          ok: false,
+          error: `File path ${params.bodyFile} is not in the allowed paths`,
+          code: 'PATH_BLOCKED',
+        };
+      }
       if (!existsSync(params.bodyFile)) {
         return { ok: false, error: `Body file not found: ${params.bodyFile}`, code: 'FILE_NOT_FOUND' };
       }
@@ -83,6 +93,7 @@ export async function handleIntercept(
 
     const logger = getGlobalLogger();
     logger.info('intercept add', { ruleId: rule.id, pattern: rule.pattern, ruleCount: interceptRules.get(tabId)!.length });
+    audit('intercept', { action: 'add', pattern: rule.pattern, ruleId: rule.id });
 
     return { ok: true, ruleId: rule.id };
   }
@@ -114,6 +125,7 @@ export async function handleIntercept(
 
     const logger = getGlobalLogger();
     logger.info('intercept remove', { ruleId: params.ruleId, remaining: rules.length });
+    audit('intercept', { action: 'remove', ruleId: params.ruleId });
 
     if (rules.length === 0) {
       interceptRules.delete(tabId);
@@ -133,6 +145,7 @@ export async function handleIntercept(
   if (action === 'clear') {
     const logger = getGlobalLogger();
     logger.info('intercept clear', { tabId });
+    audit('intercept', { action: 'clear' });
     interceptRules.delete(tabId);
     registeredListeners.delete(tabId);
     try {

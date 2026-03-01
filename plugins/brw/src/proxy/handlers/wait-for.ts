@@ -1,6 +1,8 @@
 import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
 import { handleScreenshot } from './screenshot.js';
+import { checkUrlPolicy } from '../../shared/config.js';
+import { audit } from '../logger.js';
 
 export async function handleWaitFor(
   cdp: CDPManager,
@@ -58,6 +60,26 @@ export async function handleWaitFor(
         awaitPromise: true,
         timeout: 1000,
       });
+      // Post-exec URL check
+      const needsUrlCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0);
+      if (needsUrlCheck) {
+        try {
+          const jsPage = await cdp.getPageInfo(tabId);
+          if (!checkUrlPolicy(jsPage.url, config.allowedUrls, config.blockedUrls)) {
+            audit('js', { expression: params.js.substring(0, 200), urlAfter: jsPage.url, blocked: true, source: 'wait-for' });
+            await client.Page.navigate({ url: 'about:blank' });
+            const page = await cdp.getPageInfo(tabId);
+            return {
+              ok: false,
+              error: `wait-for --js navigated to blocked URL: ${jsPage.url}`,
+              code: 'URL_BLOCKED',
+              page,
+            };
+          }
+        } catch {
+          // best effort URL check
+        }
+      }
       if (result.result?.value) {
         matched = true;
         break;

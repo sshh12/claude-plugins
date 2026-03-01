@@ -2,7 +2,7 @@ import CDP from 'chrome-remote-interface';
 import Fastify from 'fastify';
 import { mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { getConfig } from '../shared/config.js';
+import { getConfig, checkUrlPolicy, checkAllowedPath, getSecurityWarnings, resolveConfig } from '../shared/config.js';
 import { ErrorCode } from '../shared/types.js';
 import type { BrwConfig, ApiResponse } from '../shared/types.js';
 import { launchChrome, writePidFile, removePidFile, detectChromePath, getChromeVersion } from './chrome.js';
@@ -37,7 +37,7 @@ import { handleEmulate } from './handlers/emulate.js';
 import { handlePerf } from './handlers/perf.js';
 import { handleProfileList, handleProfileShow } from './handlers/profile.js';
 import { handleRunAction } from './handlers/run-action.js';
-import { createLogger, setGlobalLogger, readLogTail } from './logger.js';
+import { createLogger, setGlobalLogger, readLogTail, audit, setAuditLog } from './logger.js';
 import type { Logger } from './logger.js';
 
 let config: BrwConfig;
@@ -155,6 +155,9 @@ async function relaunchChrome(): Promise<void> {
     }
 
     if (!reconnected) {
+      if (!config.chromeLaunch) {
+        throw new Error(`No existing Chrome found on CDP port ${config.cdpPort} and chromeLaunch is disabled. Start Chrome manually with: google-chrome --remote-debugging-port=${config.cdpPort}`);
+      }
       chromeProcess = await launchChrome(config);
       setupChromeExitHandler();
     }
@@ -192,6 +195,7 @@ function setupChromeExitHandler() {
 }
 
 async function shutdown() {
+  audit('proxy_stop', {});
   logger.info('Shutting down...');
   try {
     await cdp?.closeAll();
@@ -216,10 +220,21 @@ async function shutdown() {
  * download tracking, dialog warning propagation, and error handling.
  */
 function mutationHandler(
+  commandName: string,
   handler: (body: any) => Promise<ApiResponse>,
   options?: { skipAutoScreenshotOverride?: boolean }
 ): (request: any, reply: any) => Promise<void> {
   return async (request, reply) => {
+    // Command disable check
+    if (config.disabledCommands.includes(commandName)) {
+      audit('command_disabled', { command: commandName });
+      reply.send({
+        ok: false,
+        error: `Command "${commandName}" is disabled by security policy`,
+        code: 'COMMAND_DISABLED',
+      });
+      return;
+    }
     const reqStart = Date.now();
     const reqUrl = (request.url as string) || '';
     resetIdleTimer();
@@ -247,7 +262,9 @@ function mutationHandler(
 
     let release: (() => void) | undefined;
     try {
-      release = await cdp.acquireMutex(tabId ?? undefined);
+      if (tabId) {
+        release = await cdp.acquireMutex(tabId);
+      }
       const result = await handler(body);
 
       // GIF frame capture: after successful mutation, capture a frame if recording
@@ -313,9 +330,20 @@ function mutationHandler(
  * Wrap a read-only handler (no mutex needed).
  */
 function readHandler(
+  commandName: string,
   handler: (body: any) => Promise<ApiResponse>
 ): (request: any, reply: any) => Promise<void> {
   return async (request, reply) => {
+    // Command disable check
+    if (config.disabledCommands.includes(commandName)) {
+      audit('command_disabled', { command: commandName });
+      reply.send({
+        ok: false,
+        error: `Command "${commandName}" is disabled by security policy`,
+        code: 'COMMAND_DISABLED',
+      });
+      return;
+    }
     const reqStart = Date.now();
     const reqUrl = (request.url as string) || '';
     resetIdleTimer();
@@ -401,20 +429,52 @@ function getErrorHint(code: string): string {
       return 'Check intercept rule pattern and ensure Fetch domain is enabled. Use "brw intercept list" to see active rules.';
     case ErrorCode.PROFILE_NOT_FOUND:
       return 'Use "brw profile list" to see available profiles. Profiles are discovered from .claude/brw/profiles/ and ~/.config/brw/profiles/.';
+    case ErrorCode.COMMAND_DISABLED:
+      return 'Check disabledCommands in brw config or BRW_DISABLED_COMMANDS env var';
+    case ErrorCode.PATH_BLOCKED:
+      return 'Check allowedPaths in brw config or BRW_ALLOWED_PATHS env var';
     default:
       return '';
   }
 }
 
 async function main() {
+  // Ignore SIGPIPE immediately — the CLI launcher pipes stderr during startup
+  // then destroys the read end; without this handler the default action kills us.
+  // Must be registered before any async work to avoid a race with the launcher.
+  process.on('SIGPIPE', () => {});
+
   config = getConfig();
   logger = createLogger(config.logFile);
   setGlobalLogger(logger);
   logger.info(`Config: port=${config.proxyPort} cdp=${config.cdpPort} idle=${config.idleTimeout}s viewport=${config.windowWidth}x${config.windowHeight} headless=${config.headless}`);
 
+  // Set up audit log
+  if (config.auditLog) {
+    setAuditLog(config.auditLog);
+  }
+
+  // Log security policy
+  logger.info('Security policy', {
+    allowedUrls: config.allowedUrls,
+    blockedUrls: config.blockedUrls,
+    disabledCommands: config.disabledCommands,
+    auditLog: config.auditLog || 'disabled',
+    allowedPaths: config.allowedPaths || 'unrestricted',
+  });
+
+  // Log security warnings from config resolution
+  const warnings = getSecurityWarnings();
+  for (const w of warnings) {
+    logger.warn(w);
+    audit('config_override_blocked', { warning: w });
+  }
+
+  audit('proxy_start', { port: config.proxyPort, cdpPort: config.cdpPort });
+
   // Create download directory
   const downloadDir = join(config.screenshotDir, 'downloads');
-  mkdirSync(downloadDir, { recursive: true });
+  mkdirSync(downloadDir, { recursive: true, mode: process.platform === 'linux' ? 0o700 : undefined });
 
   // Try connecting to existing Chrome before launching a new one
   let existingChrome = false;
@@ -431,6 +491,9 @@ async function main() {
   }
 
   if (!existingChrome) {
+    if (!config.chromeLaunch) {
+      throw new Error(`No existing Chrome found on CDP port ${config.cdpPort} and chromeLaunch is disabled. Start Chrome manually with: google-chrome --remote-debugging-port=${config.cdpPort}`);
+    }
     logger.info(`Launching Chrome on CDP port ${config.cdpPort}...`);
     chromeProcess = await launchChrome(config);
     setupChromeExitHandler();
@@ -497,210 +560,49 @@ async function main() {
 
   // --- Mutation endpoints (with per-tab mutex) ---
 
-  server.post(
-    '/api/screenshot',
-    mutationHandler(async (body) => handleScreenshot(cdp, config, body), { skipAutoScreenshotOverride: true })
-  );
+  server.post('/api/screenshot', mutationHandler('screenshot', async (body) => handleScreenshot(cdp, config, body), { skipAutoScreenshotOverride: true }));
+  server.post('/api/navigate', mutationHandler('navigate', async (body) => handleNavigate(cdp, config, body)));
+  server.post('/api/click', mutationHandler('click', async (body) => handleClick(cdp, config, body)));
+  server.post('/api/type', mutationHandler('type', async (body) => handleType(cdp, config, body)));
+  server.post('/api/key', mutationHandler('key', async (body) => handleKey(cdp, config, body)));
+  server.post('/api/wait', mutationHandler('wait', async (body) => handleWait(cdp, config, body)));
+  server.post('/api/tabs/switch', mutationHandler('tabs-switch', async (body) => handleSwitchTab(cdp, config, body)));
+  server.post('/api/hover', mutationHandler('hover', async (body) => handleHover(cdp, config, body)));
+  server.post('/api/scroll', mutationHandler('scroll', async (body) => handleScroll(cdp, config, body)));
+  server.post('/api/scroll-to', mutationHandler('scroll-to', async (body) => handleScrollTo(cdp, config, body)));
+  server.post('/api/drag', mutationHandler('drag', async (body) => handleDrag(cdp, config, body)));
+  server.post('/api/form-input', mutationHandler('form-input', async (body) => handleFormInput(cdp, config, body)));
+  server.post('/api/resize', mutationHandler('resize', async (body) => handleResize(cdp, config, body)));
+  server.post('/api/file-upload', mutationHandler('file-upload', async (body) => handleFileUpload(cdp, config, body)));
+  server.post('/api/wait-for', mutationHandler('wait-for', async (body) => handleWaitFor(cdp, config, body)));
+  server.post('/api/dialog', mutationHandler('dialog', async (body) => handleDialog(cdp, config, body)));
+  server.post('/api/emulate', mutationHandler('emulate', async (body) => handleEmulate(cdp, body)));
+  server.post('/api/quick', mutationHandler('quick', async (body) => handleQuick(cdp, config, body)));
+  server.post('/api/run', mutationHandler('run', async (body) => handleRunAction(cdp, config, body)));
 
-  server.post(
-    '/api/navigate',
-    mutationHandler(async (body) => handleNavigate(cdp, config, body))
-  );
+  // --- Read endpoints ---
 
-  server.post(
-    '/api/click',
-    mutationHandler(async (body) => handleClick(cdp, config, body))
-  );
-
-  server.post(
-    '/api/type',
-    mutationHandler(async (body) => handleType(cdp, config, body))
-  );
-
-  server.post(
-    '/api/key',
-    mutationHandler(async (body) => handleKey(cdp, config, body))
-  );
-
-  server.post(
-    '/api/wait',
-    mutationHandler(async (body) => handleWait(cdp, config, body))
-  );
-
-  // --- Tab endpoints ---
-
-  server.get(
-    '/api/tabs',
-    readHandler(async () => handleListTabs(cdp))
-  );
-
-  server.post(
-    '/api/tabs/new',
-    readHandler(async (body) => handleNewTab(cdp, config, body))
-  );
-
-  server.post(
-    '/api/tabs/switch',
-    mutationHandler(async (body) => handleSwitchTab(cdp, config, body))
-  );
-
-  server.post(
-    '/api/tabs/close',
-    readHandler(async (body) => handleCloseTab(cdp, body))
-  );
-
-  server.post(
-    '/api/tabs/name',
-    readHandler(async (body) => handleNameTab(cdp, body))
-  );
-
-  // --- Phase 2: Page reading and interaction ---
-
-  server.post(
-    '/api/hover',
-    mutationHandler(async (body) => handleHover(cdp, config, body))
-  );
-
-  server.post(
-    '/api/scroll',
-    mutationHandler(async (body) => handleScroll(cdp, config, body))
-  );
-
-  server.post(
-    '/api/scroll-to',
-    mutationHandler(async (body) => handleScrollTo(cdp, config, body))
-  );
-
-  server.post(
-    '/api/drag',
-    mutationHandler(async (body) => handleDrag(cdp, config, body))
-  );
-
-  server.post(
-    '/api/read-page',
-    readHandler(async (body) => handleReadPage(cdp, body))
-  );
-
-  server.post(
-    '/api/form-input',
-    mutationHandler(async (body) => handleFormInput(cdp, config, body))
-  );
-
-  server.post(
-    '/api/get-text',
-    readHandler(async (body) => handleGetText(cdp, body))
-  );
-
-  server.post(
-    '/api/js',
-    readHandler(async (body) => handleJs(cdp, body))
-  );
-  server.post(
-    '/api/console',
-    readHandler(async (body) => handleConsole(cdp, body))
-  );
-
-  server.post(
-    '/api/network',
-    readHandler(async (body) => handleNetwork(cdp, body))
-  );
-
-  server.post(
-    '/api/network-body',
-    readHandler(async (body) => handleNetworkBody(cdp, body))
-  );
-
-  server.post(
-    '/api/resize',
-    mutationHandler(async (body) => handleResize(cdp, config, body))
-  );
-
-  server.post(
-    '/api/file-upload',
-    mutationHandler(async (body) => handleFileUpload(cdp, config, body))
-  );
-  server.post(
-    '/api/wait-for',
-    mutationHandler(async (body) => handleWaitFor(cdp, config, body))
-  );
-
-  server.post(
-    '/api/dialog',
-    mutationHandler(async (body) => handleDialog(cdp, config, body))
-  );
-
-  // --- Phase 4: Advanced browser features ---
-
-  server.post(
-    '/api/cookies',
-    readHandler(async (body) => handleCookies(cdp, body))
-  );
-
-  server.post(
-    '/api/storage',
-    readHandler(async (body) => handleStorage(cdp, body))
-  );
-
-  server.post(
-    '/api/intercept',
-    readHandler(async (body) => handleIntercept(cdp, body))
-  );
-
-  server.post(
-    '/api/pdf',
-    readHandler(async (body) => handlePdf(cdp, config, body))
-  );
-
-  server.post(
-    '/api/emulate',
-    mutationHandler(async (body) => handleEmulate(cdp, body))
-  );
-
-  server.get(
-    '/api/perf',
-    readHandler(async (body) => handlePerf(cdp, body))
-  );
-  server.post(
-    '/api/quick',
-    mutationHandler(async (body) => handleQuick(cdp, config, body))
-  );
-
-  server.post(
-    '/api/gif/start',
-    readHandler(async (body) => handleGifStart(cdp, body))
-  );
-
-  server.post(
-    '/api/gif/stop',
-    readHandler(async (body) => handleGifStop(cdp, body))
-  );
-
-  server.post(
-    '/api/gif/export',
-    readHandler(async (body) => handleGifExport(cdp, config, body))
-  );
-
-  server.post(
-    '/api/gif/clear',
-    readHandler(async (body) => handleGifClear(cdp, body))
-  );
-
-  // --- App Profiles ---
-
-  server.post(
-    '/api/profiles',
-    readHandler(async (body) => handleProfileList(body))
-  );
-
-  server.post(
-    '/api/profiles/show',
-    readHandler(async (body) => handleProfileShow(body))
-  );
-
-  server.post(
-    '/api/run',
-    mutationHandler(async (body) => handleRunAction(cdp, config, body))
-  );
+  server.get('/api/tabs', readHandler('tabs', async () => handleListTabs(cdp)));
+  server.post('/api/tabs/new', mutationHandler('tabs-new', async (body) => handleNewTab(cdp, config, body)));
+  server.post('/api/tabs/close', mutationHandler('tabs-close', async (body) => handleCloseTab(cdp, body)));
+  server.post('/api/tabs/name', readHandler('tabs-name', async (body) => handleNameTab(cdp, body)));
+  server.post('/api/read-page', readHandler('read-page', async (body) => handleReadPage(cdp, body)));
+  server.post('/api/get-text', readHandler('get-text', async (body) => handleGetText(cdp, body)));
+  server.post('/api/js', readHandler('js', async (body) => handleJs(cdp, body, config)));
+  server.post('/api/console', readHandler('console', async (body) => handleConsole(cdp, body)));
+  server.post('/api/network', readHandler('network', async (body) => handleNetwork(cdp, body)));
+  server.post('/api/network-body', readHandler('network-body', async (body) => handleNetworkBody(cdp, body)));
+  server.post('/api/cookies', readHandler('cookies', async (body) => handleCookies(cdp, body)));
+  server.post('/api/storage', readHandler('storage', async (body) => handleStorage(cdp, body)));
+  server.post('/api/intercept', readHandler('intercept', async (body) => handleIntercept(cdp, body, config)));
+  server.post('/api/pdf', readHandler('pdf', async (body) => handlePdf(cdp, config, body)));
+  server.get('/api/perf', readHandler('perf', async (body) => handlePerf(cdp, body)));
+  server.post('/api/gif/start', readHandler('gif-start', async (body) => handleGifStart(cdp, body)));
+  server.post('/api/gif/stop', readHandler('gif-stop', async (body) => handleGifStop(cdp, body)));
+  server.post('/api/gif/export', readHandler('gif-export', async (body) => handleGifExport(cdp, config, body)));
+  server.post('/api/gif/clear', readHandler('gif-clear', async (body) => handleGifClear(cdp, body)));
+  server.post('/api/profiles', readHandler('profiles', async (body) => handleProfileList(body)));
+  server.post('/api/profiles/show', readHandler('profiles-show', async (body) => handleProfileShow(body)));
 
   // Start the server
   writePidFile(process.pid, config.proxyPort, chromeProcess?.pid);

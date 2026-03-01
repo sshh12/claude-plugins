@@ -157,13 +157,22 @@ export class CDPManager {
     })) as unknown as CDPClient;
 
     // Enable required domains
-    await Promise.all([
-      client.Page.enable(),
-      client.Runtime.enable(),
-      client.Network.enable(),
-      client.DOM.enable(),
-      client.Performance.enable(),
-    ]);
+    const enableDomains = async () => {
+      await Promise.all([
+        client.Page.enable(),
+        client.Runtime.enable(),
+        client.Network.enable(),
+        client.DOM.enable(),
+        client.Performance.enable(),
+      ]);
+    };
+    try {
+      await enableDomains();
+    } catch (err: any) {
+      getGlobalLogger().warn(`Domain enable failed, retrying: ${err?.message}`);
+      await new Promise((r) => setTimeout(r, 300));
+      await enableDomains();
+    }
 
     // Set up download behavior using the configurable download directory
     try {
@@ -512,19 +521,32 @@ export class CDPManager {
       port: this.cdpPort,
       url: url || 'about:blank',
     });
-    const state = await this.attachToTarget(target.id);
+    await new Promise((r) => setTimeout(r, 200));
+    let state: Awaited<ReturnType<typeof this.attachToTarget>>;
+    try {
+      state = await this.attachToTarget(target.id);
+    } catch (err: any) {
+      getGlobalLogger().warn(`attachToTarget failed for new tab ${target.id}, retrying: ${err?.message}`);
+      await new Promise((r) => setTimeout(r, 500));
+      state = await this.attachToTarget(target.id);
+    }
     this.activeTabId = target.id;
     this.lastActiveUrl = state.url || url || 'about:blank';
     return { tabId: target.id, url: state.url || url || 'about:blank' };
   }
 
   async activateTab(tabId: string): Promise<void> {
+    if (!tabId) throw new Error('Tab ID is required');
     const resolved = this.resolveTabId(tabId);
     if (!this.tabs.has(resolved)) {
       // Try to attach
       await this.attachToTarget(resolved);
     }
-    await CDP.Activate({ port: this.cdpPort, id: resolved });
+    try {
+      await CDP.Activate({ port: this.cdpPort, id: resolved });
+    } catch (err: any) {
+      getGlobalLogger().warn(`CDP.Activate failed for ${resolved}: ${err?.message}`);
+    }
     this.activeTabId = resolved;
     const tab = this.tabs.get(resolved);
     if (tab) this.lastActiveUrl = tab.url;

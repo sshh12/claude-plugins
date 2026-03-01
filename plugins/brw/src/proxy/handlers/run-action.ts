@@ -14,6 +14,8 @@ import { handleScroll, handleScrollTo } from './scroll.js';
 import { handleHover } from './hover.js';
 import { handleReadPage } from './read-page.js';
 import { handleJs } from './js.js';
+import { checkUrlPolicy } from '../../shared/config.js';
+import { audit } from '../logger.js';
 
 export async function handleRunAction(
   cdp: CDPManager,
@@ -193,6 +195,19 @@ async function executeStep(
         }
 
         const resultValue = result.result?.value ?? result.result?.description ?? null;
+
+        // Post-exec URL check for file-based JS
+        const needsUrlCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0);
+        if (needsUrlCheck) {
+          const jsPage = await cdp.getPageInfo(tabId);
+          if (!checkUrlPolicy(jsPage.url, config.allowedUrls, config.blockedUrls)) {
+            audit('js', { expression: `file:${step.file}`, urlAfter: jsPage.url, blocked: true, source: 'run-action' });
+            const jsClient = cdp.getClient(tabId);
+            await jsClient.Page.navigate({ url: 'about:blank' });
+            return { ok: false, error: `JS step navigated to blocked URL: ${jsPage.url}`, code: 'URL_BLOCKED' };
+          }
+        }
+
         return { ok: true, data: resultValue };
       }
 
@@ -202,8 +217,21 @@ async function executeStep(
           expression: step.expression,
           tab: tabId,
           frame: step.frame,
-        });
+        }, config);
         if (!jsResult.ok) return jsResult;
+
+        // Post-exec URL check for inline JS
+        const needsUrlCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0);
+        if (needsUrlCheck) {
+          const jsPage = await cdp.getPageInfo(tabId);
+          if (!checkUrlPolicy(jsPage.url, config.allowedUrls, config.blockedUrls)) {
+            audit('js', { expression: step.expression.substring(0, 200), urlAfter: jsPage.url, blocked: true, source: 'run-action' });
+            const jsClient = cdp.getClient(tabId);
+            await jsClient.Page.navigate({ url: 'about:blank' });
+            return { ok: false, error: `JS step navigated to blocked URL: ${jsPage.url}`, code: 'URL_BLOCKED' };
+          }
+        }
+
         return { ok: true, data: jsResult.result };
       }
 

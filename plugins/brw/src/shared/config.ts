@@ -1,7 +1,15 @@
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
+import { join, dirname, resolve } from 'path';
+import { homedir, platform } from 'os';
 import type { BrwConfig, ConfigSource, ResolvedConfig, ResolvedConfigEntry } from './types.js';
+
+const isLinux = platform() === 'linux';
+const defaultScreenshotDir = isLinux
+  ? join(homedir(), '.config', 'brw', 'screenshots')
+  : '/tmp/brw-screenshots';
+const defaultLogFile = isLinux
+  ? join(homedir(), '.config', 'brw', 'brw-proxy.log')
+  : '/tmp/brw-proxy.log';
 
 const DEFAULTS: BrwConfig = {
   proxyPort: 9225,
@@ -9,13 +17,18 @@ const DEFAULTS: BrwConfig = {
   chromeDataDir: join(homedir(), '.config', 'brw', 'chrome-data'),
   chromePath: null,
   headless: false,
-  screenshotDir: '/tmp/brw-screenshots',
+  screenshotDir: defaultScreenshotDir,
   idleTimeout: 14400,
   windowWidth: 1280,
   windowHeight: 800,
   allowedUrls: ['*'],
+  blockedUrls: [],
+  disabledCommands: [],
+  auditLog: null,
+  allowedPaths: null,
   autoScreenshot: true,
-  logFile: '/tmp/brw-proxy.log',
+  logFile: defaultLogFile,
+  chromeLaunch: true,
 };
 
 interface ConfigFile {
@@ -29,9 +42,17 @@ interface ConfigFile {
   windowWidth?: number;
   windowHeight?: number;
   allowedUrls?: string[];
+  blockedUrls?: string[];
+  disabledCommands?: string[];
+  auditLog?: string;
+  allowedPaths?: string[];
   autoScreenshot?: boolean;
   logFile?: string;
+  chromeLaunch?: boolean;
 }
+
+/** Security-sensitive keys where repo config cannot weaken user settings. */
+const securityWarnings: string[] = [];
 
 function loadJsonFile(path: string): ConfigFile | null {
   try {
@@ -134,8 +155,94 @@ function resolveStringArray(
   return entry(defaultVal, 'default');
 }
 
+function resolveStringArrayOrNull(
+  envVar: string | undefined,
+  repoVal: string[] | undefined,
+  userVal: string[] | undefined,
+  defaultVal: string[] | null
+): ResolvedConfigEntry<string[] | null> {
+  if (envVar !== undefined && envVar !== '') {
+    return entry(envVar.split(',').map((s) => s.trim()), 'env');
+  }
+  if (repoVal !== undefined) return entry(repoVal, 'repo');
+  if (userVal !== undefined) return entry(userVal, 'user');
+  return entry(defaultVal, 'default');
+}
+
+/**
+ * Resolve allowedUrls with security-aware merging.
+ * Repo config cannot weaken user's restrictive allowlist.
+ * If user sets a non-wildcard value, repo config is ignored.
+ */
+function resolveAllowedUrls(
+  envVar: string | undefined,
+  repoVal: string[] | undefined,
+  userVal: string[] | undefined,
+  defaultVal: string[]
+): ResolvedConfigEntry<string[]> {
+  // Env always wins
+  if (envVar !== undefined && envVar !== '') {
+    return entry(envVar.split(',').map((s) => s.trim()), 'env');
+  }
+
+  const userIsRestrictive = userVal !== undefined &&
+    !(userVal.length === 1 && userVal[0] === '*');
+
+  if (userIsRestrictive) {
+    // User has restrictive allowlist — repo cannot override
+    if (repoVal !== undefined) {
+      const repoIsWildcard = repoVal.length === 1 && repoVal[0] === '*';
+      if (repoIsWildcard || !arraysEqual(repoVal, userVal!)) {
+        securityWarnings.push(
+          `Repo allowedUrls=${JSON.stringify(repoVal)} ignored — user config restricts to ${JSON.stringify(userVal)}`
+        );
+      }
+    }
+    return entry(userVal!, 'user');
+  }
+
+  // User has wildcard or no setting — repo can narrow
+  if (repoVal !== undefined) return entry(repoVal, 'repo');
+  if (userVal !== undefined) return entry(userVal, 'user');
+  return entry(defaultVal, 'default');
+}
+
+/**
+ * Resolve blockedUrls/disabledCommands with union merge.
+ * Repo can only ADD entries, never remove user's.
+ */
+function resolveUnionStringArray(
+  envVar: string | undefined,
+  repoVal: string[] | undefined,
+  userVal: string[] | undefined,
+  defaultVal: string[]
+): ResolvedConfigEntry<string[]> {
+  // Env always wins (replaces everything)
+  if (envVar !== undefined && envVar !== '') {
+    return entry(envVar.split(',').map((s) => s.trim()), 'env');
+  }
+
+  // Union of user + repo entries
+  const userEntries = userVal || [];
+  const repoEntries = repoVal || [];
+
+  if (userEntries.length > 0 || repoEntries.length > 0) {
+    const merged = [...new Set([...userEntries, ...repoEntries])];
+    const source: ConfigSource = userEntries.length > 0 ? 'user' : 'repo';
+    return entry(merged, source);
+  }
+
+  return entry(defaultVal, 'default');
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
 export function resolveConfig(cwd?: string): ResolvedConfig {
   const workDir = cwd || process.cwd();
+  securityWarnings.length = 0;
 
   // Load config files (lower priority first)
   const userConfig = loadJsonFile(join(homedir(), '.config', 'brw', 'config.json'));
@@ -153,10 +260,22 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
     idleTimeout: resolveNumber(env.BRW_IDLE_TIMEOUT, repoConfig?.idleTimeout, userConfig?.idleTimeout, DEFAULTS.idleTimeout),
     windowWidth: resolveNumber(env.BRW_WIDTH, repoConfig?.windowWidth, userConfig?.windowWidth, DEFAULTS.windowWidth),
     windowHeight: resolveNumber(env.BRW_HEIGHT, repoConfig?.windowHeight, userConfig?.windowHeight, DEFAULTS.windowHeight),
-    allowedUrls: resolveStringArray(env.BRW_ALLOWED_URLS, repoConfig?.allowedUrls, userConfig?.allowedUrls, DEFAULTS.allowedUrls),
+    allowedUrls: resolveAllowedUrls(env.BRW_ALLOWED_URLS, repoConfig?.allowedUrls, userConfig?.allowedUrls, DEFAULTS.allowedUrls),
+    blockedUrls: resolveUnionStringArray(env.BRW_BLOCKED_URLS, repoConfig?.blockedUrls, userConfig?.blockedUrls, DEFAULTS.blockedUrls),
+    disabledCommands: resolveUnionStringArray(env.BRW_DISABLED_COMMANDS, repoConfig?.disabledCommands, userConfig?.disabledCommands, DEFAULTS.disabledCommands),
+    auditLog: resolveStringOrNull(env.BRW_AUDIT_LOG, repoConfig?.auditLog, userConfig?.auditLog, DEFAULTS.auditLog),
+    allowedPaths: resolveStringArrayOrNull(env.BRW_ALLOWED_PATHS, repoConfig?.allowedPaths, userConfig?.allowedPaths, DEFAULTS.allowedPaths),
     autoScreenshot: resolveBoolean(env.BRW_AUTO_SCREENSHOT, repoConfig?.autoScreenshot, userConfig?.autoScreenshot, DEFAULTS.autoScreenshot),
     logFile: resolveString(env.BRW_LOG_FILE, repoConfig?.logFile, userConfig?.logFile, DEFAULTS.logFile),
+    chromeLaunch: resolveBoolean(env.BRW_CHROME_LAUNCH, repoConfig?.chromeLaunch, userConfig?.chromeLaunch, DEFAULTS.chromeLaunch),
   };
+}
+
+/**
+ * Get any security warnings generated during the last resolveConfig() call.
+ */
+export function getSecurityWarnings(): string[] {
+  return [...securityWarnings];
 }
 
 export function getConfig(cwd?: string): BrwConfig {
@@ -164,6 +283,25 @@ export function getConfig(cwd?: string): BrwConfig {
   return Object.fromEntries(
     Object.entries(resolved).map(([key, entry]) => [key, (entry as ResolvedConfigEntry<unknown>).value])
   ) as unknown as BrwConfig;
+}
+
+/**
+ * Check if a URL is allowed by the allowlist AND not blocked by the blocklist.
+ * Supports glob patterns: * matches everything, *.example.com matches subdomains, etc.
+ */
+export function checkUrlPolicy(url: string, allowedUrls: string[], blockedUrls: string[]): boolean {
+  // First check allowlist
+  if (!checkAllowedUrl(url, allowedUrls)) return false;
+
+  // Then check blocklist
+  if (blockedUrls.length === 0) return true;
+
+  for (const pattern of blockedUrls) {
+    if (pattern === '*') return false;
+    if (globMatch(url, pattern)) return false;
+  }
+
+  return true;
 }
 
 /**
@@ -186,10 +324,28 @@ export function checkAllowedUrl(url: string, allowedUrls: string[]): boolean {
 }
 
 /**
+ * Check if a file path is within the allowed path prefixes.
+ * When allowedPaths is null, everything is allowed (default open behavior).
+ */
+export function checkAllowedPath(filePath: string, allowedPaths: string[] | null): boolean {
+  if (allowedPaths === null) return true;
+  if (allowedPaths.length === 0) return false;
+
+  const resolved = resolve(filePath);
+  for (const prefix of allowedPaths) {
+    const resolvedPrefix = resolve(prefix);
+    if (resolved === resolvedPrefix || resolved.startsWith(resolvedPrefix + '/')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Simple glob matching for URL patterns.
  * Supports * as wildcard (matches any sequence of characters).
  */
-function globMatch(str: string, pattern: string): boolean {
+export function globMatch(str: string, pattern: string): boolean {
   // Escape regex special chars except *, then convert * to .*
   const regexStr =
     '^' +

@@ -283,8 +283,9 @@ Returns a screenshot after the final command. See `references/QUICK-MODE.md` for
 - **Iframes**: Use `--frame 0` (by index) or `--frame "name"` to target iframe content in `read-page`, `js`, and `form-input`. Click/type/key work across frames since they dispatch at viewport coordinates.
 - **Multi-agent**: Each agent should use its own tab via `--tab <id>`. Create tabs with `/tmp/brw new-tab`.
 - **Dynamic content**: Use `/tmp/brw wait-for` instead of polling with `read-page` when waiting for async content.
-- **SPAs**: Use `--wait render` with navigate for single-page apps that load content dynamically after initial page load. For heavy apps like Gmail, prefer `--wait dom` to avoid long render waits.
-- **Global flags**: `--tab <id>` targets a specific tab, `--text` for human-readable output, `--timeout <s>` for request timeout.
+- **SPAs**: Use `--wait render` with navigate for single-page apps that load content dynamically after initial page load. For heavy apps like Gmail, prefer `--wait dom` + `wait-for --selector` to avoid long render waits.
+- **External Chrome**: To connect to an already-running Chrome, start it with `--remote-debugging-port=9222` and set `BRW_CHROME_LAUNCH=false`. The proxy will connect to the existing Chrome instance instead of launching a new one.
+- **Global flags**: `--tab <id>` targets a specific tab, `--plain` for human-readable output, `--timeout <s>` for request timeout.
 - **Session persistence**: The proxy reconnects to an existing Chrome if one is already running on the CDP port. Sessions, cookies, and tabs survive proxy restarts.
 - **Hidden overlays (Gmail compose, etc.)**: Content inside `aria-hidden` ancestors is excluded from the a11y tree. Use `--scope "[role='dialog']"` with `read-page` to target the overlay directly.
 - **Complex pages (GitHub, Gmail)**: `--search` on large pages can be slow. Narrow first with `--scope`: `/tmp/brw read-page --scope "main" --search "Submit"`
@@ -295,7 +296,43 @@ Returns a screenshot after the final command. See `references/QUICK-MODE.md` for
 
 Set via environment variables (`BRW_*`), `.claude/brw.json` (per-repo), or `~/.config/brw/config.json` (user). Run `/tmp/brw config` to see resolved values.
 
-Key variables: `BRW_HEADLESS`, `BRW_CHROME_PATH`, `BRW_PORT`, `BRW_SCREENSHOT_DIR`, `BRW_ALLOWED_URLS`, `BRW_AUTO_SCREENSHOT` (set to `false` to disable auto-screenshots on mutation commands — useful for automation loops).
+Key variables: `BRW_HEADLESS`, `BRW_CHROME_PATH`, `BRW_PORT`, `BRW_SCREENSHOT_DIR`, `BRW_ALLOWED_URLS`, `BRW_AUTO_SCREENSHOT` (set to `false` to disable auto-screenshots on mutation commands — useful for automation loops), `BRW_CHROME_LAUNCH` (set to `false` to connect to an existing Chrome instead of launching one).
+
+## Security Configuration
+
+Enterprise security controls restrict what brw can do. Set in `~/.config/brw/config.json` (user) or `.claude/brw.json` (repo). Repo config cannot weaken user security settings — it can only tighten restrictions.
+
+```bash
+# Deny-list URLs (glob patterns, checked after allowlist)
+BRW_BLOCKED_URLS="*admin*,169.254.169.254"
+
+# Disable commands at the proxy level
+BRW_DISABLED_COMMANDS="js,intercept,cookies,storage"
+
+# Structured JSONL audit log for compliance
+BRW_AUDIT_LOG="/var/log/brw-audit.jsonl"
+
+# Restrict file I/O to directory prefixes
+BRW_ALLOWED_PATHS="/tmp,/home/user/projects"
+```
+
+Example enterprise config (`~/.config/brw/config.json`):
+
+```json
+{
+  "allowedUrls": ["*.corp.com"],
+  "blockedUrls": ["*admin*", "169.254.169.254"],
+  "disabledCommands": ["js", "intercept"],
+  "auditLog": "/var/log/brw-audit.jsonl",
+  "allowedPaths": ["/tmp", "/home/user/projects"]
+}
+```
+
+Config lockdown rules:
+- **allowedUrls**: If user config is restrictive (not `["*"]`), repo config cannot override it.
+- **blockedUrls**: Union of user + repo entries. Repo can only add blocked URLs.
+- **disabledCommands**: Union of user + repo entries. Repo can only add disabled commands.
+- Env vars (`BRW_*`) always take highest priority.
 
 ## App Profiles
 

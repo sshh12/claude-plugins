@@ -4,6 +4,7 @@ import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 import { PNG } from 'pngjs';
 import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
+import { checkAllowedPath } from '../../shared/config.js';
 
 interface GifFrame {
   screenshot: Buffer;
@@ -114,6 +115,14 @@ export async function handleGifExport(
   const showDrags = params.showDrags !== false;
   const showLabels = params.showLabels === true;
   const showProgress = params.showProgress === true;
+
+  if (params.output && !checkAllowedPath(params.output, config.allowedPaths)) {
+    return {
+      ok: false,
+      error: `Output path ${params.output} is not in the allowed paths`,
+      code: 'PATH_BLOCKED',
+    };
+  }
 
   // Determine output path
   const outputDir = config.screenshotDir;

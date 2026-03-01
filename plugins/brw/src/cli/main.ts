@@ -9,10 +9,10 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.5.3')
+  .version('0.6.1')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
-  .option('--text', 'Output as plain text instead of JSON')
+  .option('--plain', 'Output as plain text instead of JSON')
   .option('--timeout <seconds>', 'CLI request timeout', '30')
   .option('--debug', 'Verbose logging to stderr')
   .option('--port <port>', 'Proxy server port');
@@ -26,7 +26,7 @@ function getGlobalOpts(): { tab?: string; text: boolean; timeout: number; debug:
   const opts = program.opts();
   return {
     tab: opts.tab,
-    text: !!opts.text,
+    text: !!opts.plain,
     timeout: parseInt(opts.timeout, 10) || 30,
     debug: !!opts.debug,
     port: getPort(),
@@ -60,21 +60,6 @@ async function run(
 
   try {
     let result = await proxyRequest(method, endpoint, body, globals.port, globals.timeout, globals.debug);
-
-    // Auto-restart on CDP errors (stale websocket, Chrome crash) — retry once
-    if (!result.ok && result.code === 'CDP_ERROR') {
-      if (globals.debug) {
-        process.stderr.write('[brw] CDP error, restarting proxy and retrying...\n');
-      }
-      try {
-        await proxyRequest('POST', '/shutdown', {}, globals.port, 5, false);
-      } catch { /* ignore */ }
-      // Wait for old proxy to die
-      await new Promise((r) => setTimeout(r, 1000));
-      const { startProxy } = await import('./proxy-launcher.js');
-      await startProxy(globals.port, undefined, undefined, globals.debug);
-      result = await proxyRequest(method, endpoint, body, globals.port, globals.timeout, globals.debug);
-    }
 
     process.stdout.write(formatOutput(result, globals.text) + '\n');
 
