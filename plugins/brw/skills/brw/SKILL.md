@@ -98,6 +98,7 @@ Check `page.url` between commands to detect unexpected navigations. On error, re
 /tmp/brw read-page --ref ref_5             # Subtree rooted at ref
 /tmp/brw read-page --depth 2              # Limit tree depth
 /tmp/brw read-page --frame 0              # Read iframe content
+/tmp/brw read-page --limit 50             # Cap at 50 ref elements (use --search to narrow)
 ```
 
 The tree includes ref IDs (like `ref_1`, `ref_2`) that can be used with `--ref` in other commands. Refs persist until navigation.
@@ -125,12 +126,14 @@ Set form values programmatically (triggers change/input events):
 ```bash
 /tmp/brw js "document.title"                           # Evaluate expression
 /tmp/brw js --file /tmp/script.js                      # Read JS from file
-cat script.js | /tmp/brw js -                          # Read JS from stdin
 /tmp/brw js "await fetch('/api').then(r => r.json())"  # Async expression
 /tmp/brw js "document.title" --frame 0                 # Execute in iframe
+/tmp/brw js - <<'JS'                                   # Heredoc (recommended for multi-line)
+document.querySelectorAll('a').forEach(a => console.log(a.href))
+JS
 ```
 
-For complex or multi-line JS, use `--file` or pipe via stdin to avoid shell quoting issues.
+For complex or multi-line JS, use heredoc (`brw js - <<'JS'`) or `--file` to avoid shell quoting issues.
 
 ### Scroll
 
@@ -169,9 +172,13 @@ For complex or multi-line JS, use `--file` or pipe via stdin to avoid shell quot
 ```bash
 /tmp/brw tabs                              # List all tabs
 /tmp/brw new-tab "https://example.com"     # Open URL in new tab
-/tmp/brw switch-tab <id>                   # Switch to tab
+/tmp/brw switch-tab <id>                   # Switch to tab (accepts ID or alias)
 /tmp/brw close-tab <id>                    # Close tab
+/tmp/brw name-tab inbox                    # Name active tab "inbox"
+/tmp/brw name-tab docs 2                   # Name tab 2 "docs"
 ```
+
+Named tabs can be used anywhere `--tab` is accepted (e.g., `--tab inbox`).
 
 ### Dialog Handling
 
@@ -249,6 +256,8 @@ T hello world
 K Enter"
 ```
 
+Ref-based commands are also available: `CR ref_5` (click ref), `FR ref_3 value` (form-input ref), `R` (read-page), `WF --text "Done"` (wait-for).
+
 Returns a screenshot after the final command. See `references/QUICK-MODE.md` for the full command table.
 
 ## Tips
@@ -261,12 +270,14 @@ Returns a screenshot after the final command. See `references/QUICK-MODE.md` for
 - **Dynamic content**: Use `/tmp/brw wait-for` instead of polling with `read-page` when waiting for async content.
 - **SPAs**: Use `--wait render` with navigate for single-page apps that load content dynamically after initial page load.
 - **Global flags**: `--tab <id>` targets a specific tab, `--text` for human-readable output, `--timeout <s>` for request timeout.
+- **Session persistence**: The proxy reconnects to an existing Chrome if one is already running on the CDP port. Sessions, cookies, and tabs survive proxy restarts.
+- **Hidden overlays (Gmail compose, etc.)**: Content inside `aria-hidden` ancestors is excluded from the a11y tree. Use `--scope "[role='dialog']"` with `read-page` to target the overlay directly.
 
 ## Configuration
 
 Set via environment variables (`BRW_*`), `.claude/brw.json` (per-repo), or `~/.config/brw/config.json` (user). Run `/tmp/brw config` to see resolved values.
 
-Key variables: `BRW_HEADLESS`, `BRW_CHROME_PATH`, `BRW_PORT`, `BRW_SCREENSHOT_DIR`, `BRW_ALLOWED_URLS`.
+Key variables: `BRW_HEADLESS`, `BRW_CHROME_PATH`, `BRW_PORT`, `BRW_SCREENSHOT_DIR`, `BRW_ALLOWED_URLS`, `BRW_AUTO_SCREENSHOT` (set to `false` to disable auto-screenshots on mutation commands — useful for automation loops).
 
 ## App Profiles
 

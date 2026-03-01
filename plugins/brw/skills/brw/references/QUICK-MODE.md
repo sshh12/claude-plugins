@@ -31,6 +31,10 @@ Commands are separated by newlines. One command per line.
 | `ST` | Switch tab | `ST <tabId>` | `ST 3` |
 | `NT` | New tab | `NT <url>` | `NT https://example.com` |
 | `LT` | List tabs | `LT` | `LT` |
+| `CR` | Click ref | `CR <ref>` | `CR ref_5` |
+| `FR` | Form-input ref | `FR <ref> <value>` | `FR ref_3 hello` |
+| `R` | Read page | `R [--filter interactive] [--search TEXT]` | `R --search Submit` |
+| `WF` | Wait-for | `WF <flags>` | `WF --text "Success"` |
 
 ## Output
 
@@ -46,7 +50,7 @@ Commands are separated by newlines. One command per line.
 }
 ```
 
-- Only `LT` and `J` produce intermediate results (returned in the `results` array)
+- `LT`, `J`, `R`, `WF`, and `NT` produce intermediate results (returned in the `results` array)
 - A single screenshot is taken after the last command
 - All commands execute sequentially in order
 
@@ -90,6 +94,15 @@ T new content"
 brw quick "NT https://docs.example.com
 W
 LT"
+```
+
+### Ref-based interaction
+
+```bash
+brw quick "R --filter interactive
+CR ref_5
+WF --text 'Saved'
+R --search status"
 ```
 
 ### Scroll and capture region

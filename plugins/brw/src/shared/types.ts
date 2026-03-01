@@ -11,6 +11,7 @@ export interface BrwConfig {
   windowWidth: number;
   windowHeight: number;
   allowedUrls: string[];
+  autoScreenshot: boolean;
 }
 
 export type ConfigSource = 'env' | 'repo' | 'user' | 'default';

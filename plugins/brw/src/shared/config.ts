@@ -14,6 +14,7 @@ const DEFAULTS: BrwConfig = {
   windowWidth: 1280,
   windowHeight: 800,
   allowedUrls: ['*'],
+  autoScreenshot: true,
 };
 
 interface ConfigFile {
@@ -27,6 +28,7 @@ interface ConfigFile {
   windowWidth?: number;
   windowHeight?: number;
   allowedUrls?: string[];
+  autoScreenshot?: boolean;
 }
 
 function loadJsonFile(path: string): ConfigFile | null {
@@ -150,6 +152,7 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
     windowWidth: resolveNumber(env.BRW_WIDTH, repoConfig?.windowWidth, userConfig?.windowWidth, DEFAULTS.windowWidth),
     windowHeight: resolveNumber(env.BRW_HEIGHT, repoConfig?.windowHeight, userConfig?.windowHeight, DEFAULTS.windowHeight),
     allowedUrls: resolveStringArray(env.BRW_ALLOWED_URLS, repoConfig?.allowedUrls, userConfig?.allowedUrls, DEFAULTS.allowedUrls),
+    autoScreenshot: resolveBoolean(env.BRW_AUTO_SCREENSHOT, repoConfig?.autoScreenshot, userConfig?.autoScreenshot, DEFAULTS.autoScreenshot),
   };
 }
 

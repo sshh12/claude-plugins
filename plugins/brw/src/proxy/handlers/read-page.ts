@@ -46,13 +46,13 @@ const TREE_SCRIPT = `
     // For some elements, use text content
     const tag = el.tagName.toLowerCase();
     if (['button', 'a', 'label', 'legend', 'caption', 'figcaption', 'summary', 'option'].includes(tag)) {
-      return el.textContent?.trim().substring(0, 200) || '';
+      return el.innerText?.trim().substring(0, 200) || '';
     }
-    // For elements with interactive ARIA roles (div[role="button"], etc.), use textContent
+    // For elements with interactive ARIA roles (div[role="button"], etc.), use innerText
     const elRole = el.getAttribute('role');
     if (elRole && ['button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
         'tab', 'option', 'treeitem', 'switch', 'combobox', 'textbox'].includes(elRole)) {
-      const text = el.textContent?.trim().substring(0, 200);
+      const text = el.innerText?.trim().substring(0, 200);
       if (text) return text;
     }
     // Last resort: check first child's aria-label (common in Google apps)

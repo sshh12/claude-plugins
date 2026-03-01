@@ -9,7 +9,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.5.0')
+  .version('0.5.1')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--text', 'Output as plain text instead of JSON')
@@ -425,13 +425,13 @@ program
         process.stderr.write(`Error: file not found: ${opts.file}\n`);
         process.exit(ExitCode.USAGE_ERROR);
       }
-      jsCode = readFileSync(opts.file, 'utf-8');
+      jsCode = readFileSync(opts.file, 'utf-8').trim();
     } else if (expression === '-' || (!expression && !process.stdin.isTTY)) {
       const chunks: Buffer[] = [];
       for await (const chunk of process.stdin) {
         chunks.push(chunk as Buffer);
       }
-      jsCode = Buffer.concat(chunks).toString('utf-8');
+      jsCode = Buffer.concat(chunks).toString('utf-8').trim();
     }
 
     if (!jsCode) {

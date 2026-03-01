@@ -199,7 +199,8 @@ async function shutdown() {
  * download tracking, dialog warning propagation, and error handling.
  */
 function mutationHandler(
-  handler: (body: any) => Promise<ApiResponse>
+  handler: (body: any) => Promise<ApiResponse>,
+  options?: { skipAutoScreenshotOverride?: boolean }
 ): (request: any, reply: any) => Promise<void> {
   return async (request, reply) => {
     resetIdleTimer();
@@ -219,6 +220,9 @@ function mutationHandler(
     }
 
     const body = (request.body as any) || {};
+    if (config.autoScreenshot === false && body.noScreenshot === undefined && !options?.skipAutoScreenshotOverride) {
+      body.noScreenshot = true;
+    }
     const tabId = body.tab || cdp.getActiveTabId();
 
     let release: (() => void) | undefined;
@@ -456,7 +460,7 @@ async function main() {
 
   server.post(
     '/api/screenshot',
-    mutationHandler(async (body) => handleScreenshot(cdp, config, body))
+    mutationHandler(async (body) => handleScreenshot(cdp, config, body), { skipAutoScreenshotOverride: true })
   );
 
   server.post(

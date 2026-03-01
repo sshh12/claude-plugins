@@ -187,6 +187,7 @@ brw read-page [--filter all|interactive] [--search TEXT] [--ref REF] [--scope CS
 | `--ref` | — | Return subtree rooted at this ref |
 | `--scope` | — | Return subtree rooted at CSS selector (alternative to --ref) |
 | `--depth` | unlimited | Max tree depth |
+| `--limit` | unlimited | Max number of ref elements to include (truncates tree with hint to use --search) |
 | `--max-chars` | unlimited | Truncate output |
 | `--frame` | main frame | Target iframe by 0-based index, `name`/`id` attribute, or URL substring |
 
@@ -322,7 +323,17 @@ Output: `{"ok": true, "tabId": 2, "url": "..."}`
 brw switch-tab <id>
 ```
 
-Mutation command — returns screenshot of the switched-to tab.
+`<id>` accepts a numeric tab ID or a named alias (see `name-tab`). Mutation command — returns screenshot of the switched-to tab.
+
+### `brw name-tab`
+
+```bash
+brw name-tab <alias> [tabId]
+```
+
+Assigns a human-readable alias to the current or specified tab. The alias can then be used anywhere `--tab` or tab IDs are accepted (e.g., `--tab inbox`, `brw switch-tab docs`).
+
+Output: `{"ok": true, "tabId": 2, "alias": "inbox"}`
 
 ### `brw close-tab`
 
@@ -537,6 +548,7 @@ Priority (highest wins): Environment variables > `.claude/brw.json` > `~/.config
 | Idle timeout | `BRW_IDLE_TIMEOUT` | 1800s |
 | Window size | `BRW_WIDTH` / `BRW_HEIGHT` | 1280 x 800 |
 | URL allowlist | `BRW_ALLOWED_URLS` | `*` (all) |
+| Auto-screenshot | `BRW_AUTO_SCREENSHOT` | true |
 
 ---
 
