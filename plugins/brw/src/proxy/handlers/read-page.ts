@@ -221,6 +221,7 @@ export async function handleReadPage(
     filter?: string;
     depth?: number;
     ref?: string;
+    scope?: string;
     maxChars?: number;
     search?: string;
     frame?: string;
@@ -232,9 +233,17 @@ export async function handleReadPage(
   let expression: string;
 
   if (params.ref) {
-    // Scope to a subtree
+    // Scope to a subtree by ref
     expression = `${TREE_SCRIPT}({
       rootEl: window.__brwElementMap?.get(${JSON.stringify(params.ref)})?.deref(),
+      filter: ${JSON.stringify(params.filter || 'all')},
+      maxDepth: ${params.depth || 30},
+      search: ${JSON.stringify(params.search || '')}
+    })`;
+  } else if (params.scope) {
+    // Scope to a subtree by CSS selector
+    expression = `${TREE_SCRIPT}({
+      rootEl: document.querySelector(${JSON.stringify(params.scope)}),
       filter: ${JSON.stringify(params.filter || 'all')},
       maxDepth: ${params.depth || 30},
       search: ${JSON.stringify(params.search || '')}

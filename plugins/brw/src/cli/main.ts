@@ -9,7 +9,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.3.0')
+  .version('0.4.0')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--text', 'Output as plain text instead of JSON')
@@ -352,6 +352,7 @@ program
   .option('--filter <mode>', 'Filter: all or interactive', 'all')
   .option('--search <text>', 'Search for elements by text')
   .option('--ref <ref>', 'Return subtree rooted at ref')
+  .option('--scope <css>', 'Return subtree rooted at CSS selector')
   .option('--depth <n>', 'Max tree depth')
   .option('--max-chars <n>', 'Truncate output')
   .option('--frame <target>', 'Target iframe by index, name, or URL')
@@ -360,6 +361,7 @@ program
       filter: opts.filter,
       search: opts.search,
       ref: opts.ref,
+      scope: opts.scope,
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
       maxChars: opts.maxChars ? parseInt(opts.maxChars, 10) : undefined,
       frame: opts.frame,
@@ -794,6 +796,51 @@ program
   .action(async (commands, opts) => {
     await run('POST', '/api/quick', {
       commands,
+      noScreenshot: opts.screenshot === false,
+    });
+  });
+
+// ---- profile ----
+
+const profileCmd = program
+  .command('profile')
+  .description('Manage app profiles');
+
+profileCmd
+  .command('list')
+  .description('List all discovered profiles')
+  .action(async () => {
+    await run('POST', '/api/profiles', {});
+  });
+
+profileCmd
+  .command('show <name>')
+  .description('Show profile details')
+  .action(async (name) => {
+    await run('POST', '/api/profiles/show', { name });
+  });
+
+// ---- run ----
+
+program
+  .command('run <target>')
+  .description('Run a profile action (format: profile:action)')
+  .option('--param <kv...>', 'Action parameters as key=value pairs')
+  .option('--no-screenshot', 'Skip auto-screenshot')
+  .action(async (target, opts) => {
+    // Parse --param key=value pairs into an object
+    const params: Record<string, string> = {};
+    if (opts.param) {
+      for (const kv of opts.param) {
+        const eqIdx = kv.indexOf('=');
+        if (eqIdx !== -1) {
+          params[kv.substring(0, eqIdx)] = kv.substring(eqIdx + 1);
+        }
+      }
+    }
+    await run('POST', '/api/run', {
+      target,
+      params: Object.keys(params).length > 0 ? params : undefined,
       noScreenshot: opts.screenshot === false,
     });
   });

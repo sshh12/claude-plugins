@@ -70,6 +70,7 @@ export const ErrorCode = {
   NETWORK_REQUEST_NOT_FOUND: 'NETWORK_REQUEST_NOT_FOUND',
   JS_ERROR: 'JS_ERROR',
   INTERCEPT_ERROR: 'INTERCEPT_ERROR',
+  PROFILE_NOT_FOUND: 'PROFILE_NOT_FOUND',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -132,6 +133,56 @@ export interface EmulationSettings {
   userAgent?: string;
   mediaType?: string;
   mediaFeatures?: Array<{ name: string; value: string }>;
+}
+
+// ---- App Profiles ----
+
+export interface ActionStep {
+  action: string;
+  file?: string;
+  selector?: string;
+  keys?: string;
+  value?: string;
+  url?: string;
+  direction?: string;
+  amount?: number;
+  duration?: number;
+  timeout?: number;
+  expression?: string;
+  frame?: string;
+  ref?: string;
+  text?: string;
+  filter?: string;
+  [key: string]: unknown;
+}
+
+export interface ActionDef {
+  description: string;
+  params?: Record<string, string>;
+  noScreenshot?: boolean;
+  steps: ActionStep[];
+}
+
+export interface ObserverDef {
+  description: string;
+  condition: { selector: string };
+  debounce?: number;
+  run: string;
+}
+
+export interface ProfileManifest {
+  name: string;
+  description: string;
+  match?: string[];
+  selectors?: Record<string, string>;
+  actions: Record<string, ActionDef>;
+  observers?: Record<string, ObserverDef>;
+}
+
+export interface LoadedProfile {
+  manifest: ProfileManifest;
+  dir: string;
+  source: 'repo' | 'user' | 'plugin';
 }
 
 // ---- GIF Recording ----

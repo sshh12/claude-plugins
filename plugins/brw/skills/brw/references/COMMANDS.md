@@ -177,7 +177,7 @@ Modifiers: `cmd+a`, `ctrl+c`, `shift+Tab`, `alt+F4`, `ctrl+shift+i`.
 ### `brw read-page`
 
 ```bash
-brw read-page [--filter all|interactive] [--search TEXT] [--ref REF] [--depth N] [--max-chars N] [--frame INDEX|NAME] [--tab ID]
+brw read-page [--filter all|interactive] [--search TEXT] [--ref REF] [--scope CSS] [--depth N] [--max-chars N] [--frame INDEX|NAME] [--tab ID]
 ```
 
 | Flag | Default | Description |
@@ -185,6 +185,7 @@ brw read-page [--filter all|interactive] [--search TEXT] [--ref REF] [--depth N]
 | `--filter` | `all` | `all` = full tree, `interactive` = inputs/buttons/links only |
 | `--search` | — | Case-insensitive text search, returns matching elements |
 | `--ref` | — | Return subtree rooted at this ref |
+| `--scope` | — | Return subtree rooted at CSS selector (alternative to --ref) |
 | `--depth` | unlimited | Max tree depth |
 | `--max-chars` | unlimited | Truncate output |
 | `--frame` | main frame | Target iframe by 0-based index, `name`/`id` attribute, or URL substring |
@@ -536,3 +537,47 @@ Priority (highest wins): Environment variables > `.claude/brw.json` > `~/.config
 | Idle timeout | `BRW_IDLE_TIMEOUT` | 1800s |
 | Window size | `BRW_WIDTH` / `BRW_HEIGHT` | 1280 x 800 |
 | URL allowlist | `BRW_ALLOWED_URLS` | `*` (all) |
+
+---
+
+## App Profiles
+
+### `brw profile list`
+
+```bash
+brw profile list
+```
+
+Lists all discovered profiles with name, description, match patterns, and available actions.
+
+Output: `{"ok": true, "profiles": [{"name": "...", "description": "...", "actions": [...], "selectors": [...]}]}`
+
+### `brw profile show`
+
+```bash
+brw profile show <name>
+```
+
+Shows full profile details including action definitions, parameters, selectors map, and observers.
+
+Output: `{"ok": true, "name": "...", "actions": {...}, "selectors": {...}}`
+
+### `brw run`
+
+```bash
+brw run <profile>:<action> [--param key=value ...] [--no-screenshot] [--tab ID]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--param` | Action parameters as `key=value` pairs (repeatable) |
+| `--no-screenshot` | Skip auto-screenshot (also skipped if action has `noScreenshot: true`) |
+
+Executes a profile action's step sequence. Steps map to existing brw commands (`js`, `click`, `type`, `key`, `form-input`, `wait`, `wait-for`, `navigate`, `scroll`, `hover`, `screenshot`, `read-page`).
+
+JS steps with `file` reference run a JS IIFE from the profile directory in the page context. The IIFE receives action params as its argument and can return data.
+
+Output: `{"ok": true, "screenshot": "...", "page": {...}, "profile": "...", "action": "...", "data": ..., "stepResults": [...]}`
+
+- `data`: return value from the last JS step (if any)
+- `stepResults`: array of `{step, action, data}` for JS steps that returned data

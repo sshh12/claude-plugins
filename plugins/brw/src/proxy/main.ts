@@ -34,6 +34,8 @@ import { handleIntercept } from './handlers/intercept.js';
 import { handlePdf } from './handlers/pdf.js';
 import { handleEmulate } from './handlers/emulate.js';
 import { handlePerf } from './handlers/perf.js';
+import { handleProfileList, handleProfileShow } from './handlers/profile.js';
+import { handleRunAction } from './handlers/run-action.js';
 
 let config: BrwConfig;
 let cdp: CDPManager;
@@ -345,6 +347,8 @@ function getErrorHint(code: string): string {
       return 'Check the JavaScript expression for syntax errors. Use "brw js" to run expressions.';
     case ErrorCode.INTERCEPT_ERROR:
       return 'Check intercept rule pattern and ensure Fetch domain is enabled. Use "brw intercept list" to see active rules.';
+    case ErrorCode.PROFILE_NOT_FOUND:
+      return 'Use "brw profile list" to see available profiles. Profiles are discovered from .claude/brw/profiles/ and ~/.config/brw/profiles/.';
     default:
       return '';
   }
@@ -593,6 +597,23 @@ async function main() {
   server.post(
     '/api/gif/clear',
     readHandler(async (body) => handleGifClear(cdp, body))
+  );
+
+  // --- App Profiles ---
+
+  server.post(
+    '/api/profiles',
+    readHandler(async (body) => handleProfileList(body))
+  );
+
+  server.post(
+    '/api/profiles/show',
+    readHandler(async (body) => handleProfileShow(body))
+  );
+
+  server.post(
+    '/api/run',
+    mutationHandler(async (body) => handleRunAction(cdp, config, body))
   );
 
   // Start the server

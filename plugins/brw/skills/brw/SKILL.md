@@ -268,7 +268,21 @@ Set via environment variables (`BRW_*`), `.claude/brw.json` (per-repo), or `~/.c
 
 Key variables: `BRW_HEADLESS`, `BRW_CHROME_PATH`, `BRW_PORT`, `BRW_SCREENSHOT_DIR`, `BRW_ALLOWED_URLS`.
 
+## App Profiles
+
+Profiles package app-specific automation (selectors, JS scripts, multi-step actions) into reusable config directories. Instead of repeating workarounds in every prompt, call profile actions directly:
+
+```bash
+/tmp/brw profile list                                          # List available profiles
+/tmp/brw profile show google-docs                              # Show profile actions/selectors
+/tmp/brw run google-docs:read-content                          # Run a profile action
+/tmp/brw run google-docs:type-text --param text="Hello"        # Run with parameters
+```
+
+Profiles live in `.claude/brw/profiles/<name>/` (repo) or `~/.config/brw/profiles/<name>/` (user). See `references/PROFILES.md` for authoring details.
+
 ## References
 
 - **Full command reference**: `references/COMMANDS.md` — all flags, output fields, and edge cases
 - **Quick mode reference**: `references/QUICK-MODE.md` — command table and multi-step examples
+- **App profiles reference**: `references/PROFILES.md` — profile format, discovery, authoring guide
