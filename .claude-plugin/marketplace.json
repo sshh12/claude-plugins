@@ -5,13 +5,12 @@
   },
   "metadata": {
     "description": "Claude Code plugin marketplace by shrivu",
-    "version": "0.1.0",
-    "pluginRoot": "./plugins"
+    "version": "0.1.0"
   },
   "plugins": [
     {
       "name": "brw",
-      "source": "./brw",
+      "source": "./plugins/brw",
       "description": "Browser automation for Claude Code via Chrome DevTools Protocol"
     }
   ]
