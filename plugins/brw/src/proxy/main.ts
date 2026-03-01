@@ -97,6 +97,9 @@ async function setupInitialTab(cdpMgr: CDPManager, cfg: BrwConfig): Promise<void
     // Navigate away from Chrome's New Tab Page to a blank page
     await client.Page.navigate({ url: 'about:blank' });
     await client.Page.loadEventFired();
+
+    // Refresh tab list — navigation to about:blank can change target IDs
+    await cdpMgr.listTabs();
   } catch (err) {
     console.error('[brw-proxy] Warning: failed to set initial viewport/blank page:', err);
   }
@@ -375,10 +378,14 @@ async function main() {
     const chromePath = config.chromePath || detectChromePath();
     let cdpOk = false;
     try {
+      // Refresh tab list to pick up any target ID changes
+      await cdp.listTabs();
       const tabId = cdp.getActiveTabId();
-      const client = cdp.getClient(tabId);
-      await client.Runtime.evaluate({ expression: '1', returnByValue: true, timeout: 2000 });
-      cdpOk = true;
+      if (tabId) {
+        const client = cdp.getClient(tabId);
+        await client.Runtime.evaluate({ expression: '1', returnByValue: true, timeout: 2000 });
+        cdpOk = true;
+      }
     } catch {
       cdpOk = false;
     }

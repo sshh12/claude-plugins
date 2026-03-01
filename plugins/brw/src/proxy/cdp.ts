@@ -404,6 +404,11 @@ export class CDPManager {
       }
     }
 
+    // Reset activeTabId if it's stale (target was destroyed/recreated)
+    if (this.activeTabId && !this.tabs.has(this.activeTabId)) {
+      this.activeTabId = this.tabs.size > 0 ? this.tabs.keys().next().value! : null;
+    }
+
     return pageTargets.map((t: any) => ({
       id: t.id,
       url: t.url,
