@@ -71,11 +71,12 @@ async function waitForPage(client: any, strategy: string): Promise<void> {
   if (strategy === 'none') return;
 
   if (strategy === 'dom') {
+    let domHandler: (() => void) | null = null;
     try {
       await Promise.race([
         new Promise<void>((resolve) => {
-          const handler = () => resolve();
-          client.on('Page.domContentEventFired', handler);
+          domHandler = () => resolve();
+          client.on('Page.domContentEventFired', domHandler);
           // Clean up after timeout
           setTimeout(() => {
             resolve();
@@ -95,23 +96,28 @@ async function waitForPage(client: any, strategy: string): Promise<void> {
       ]);
     } catch {
       // Best effort
+    } finally {
+      if (domHandler) client.removeListener('Page.domContentEventFired', domHandler);
     }
     return;
   }
 
   if (strategy === 'network') {
     // Wait for network idle (no requests for 500ms)
+    let networkHandler: (() => void) | null = null;
     await new Promise<void>((resolve) => {
       let timer: ReturnType<typeof setTimeout>;
       const resetTimer = () => {
         clearTimeout(timer);
         timer = setTimeout(resolve, 500);
       };
+      networkHandler = resetTimer;
       resetTimer();
-      client.on('Network.requestWillBeSent', resetTimer);
+      client.on('Network.requestWillBeSent', networkHandler);
       // Safety timeout
       setTimeout(resolve, 15000);
     });
+    if (networkHandler) client.removeListener('Network.requestWillBeSent', networkHandler);
     return;
   }
 
@@ -121,6 +127,7 @@ async function waitForPage(client: any, strategy: string): Promise<void> {
     // (b) network idle 500ms
     // (c) LayoutCount stable for 500ms
     // (d) double-rAF for paint completion
+    // (e) responsiveness ping
     const SAFETY_TIMEOUT = 15000;
     const start = Date.now();
     const elapsed = () => Date.now() - start;
@@ -149,6 +156,7 @@ async function waitForPage(client: any, strategy: string): Promise<void> {
     } catch { /* best effort */ }
 
     // (b) Network idle 500ms
+    let networkHandler: (() => void) | null = null;
     if (elapsed() < SAFETY_TIMEOUT) {
       await new Promise<void>((resolve) => {
         const remaining = SAFETY_TIMEOUT - elapsed();
@@ -158,9 +166,11 @@ async function waitForPage(client: any, strategy: string): Promise<void> {
           clearTimeout(timer);
           timer = setTimeout(() => { clearTimeout(safetyTimer); resolve(); }, 500);
         };
+        networkHandler = resetTimer;
         resetTimer();
-        client.on('Network.requestWillBeSent', resetTimer);
+        client.on('Network.requestWillBeSent', networkHandler);
       });
+      if (networkHandler) client.removeListener('Network.requestWillBeSent', networkHandler);
     }
 
     // (c) LayoutCount stable for 500ms via Performance.getMetrics
@@ -209,5 +219,14 @@ async function waitForPage(client: any, strategy: string): Promise<void> {
         });
       } catch { /* best effort */ }
     }
+
+    // (e) Responsiveness ping — verify page is responsive after render
+    try {
+      await client.Runtime.evaluate({
+        expression: '1',
+        returnByValue: true,
+        timeout: 2000,
+      });
+    } catch { /* best effort */ }
   }
 }

@@ -242,6 +242,8 @@ Dialogs auto-dismiss after 5 seconds if not handled explicitly.
 /tmp/brw gif export --output demo.gif      # Export animated GIF
 /tmp/brw server status                     # Check proxy status
 /tmp/brw server stop                       # Stop proxy and Chrome
+/tmp/brw log                               # Show recent proxy log entries
+/tmp/brw log --lines 100                   # Show last 100 log lines
 ```
 
 ## Quick Mode
@@ -268,7 +270,7 @@ Returns a screenshot after the final command. See `references/QUICK-MODE.md` for
 - **Iframes**: Use `--frame 0` (by index) or `--frame "name"` to target iframe content in `read-page`, `js`, and `form-input`. Click/type/key work across frames since they dispatch at viewport coordinates.
 - **Multi-agent**: Each agent should use its own tab via `--tab <id>`. Create tabs with `/tmp/brw new-tab`.
 - **Dynamic content**: Use `/tmp/brw wait-for` instead of polling with `read-page` when waiting for async content.
-- **SPAs**: Use `--wait render` with navigate for single-page apps that load content dynamically after initial page load.
+- **SPAs**: Use `--wait render` with navigate for single-page apps that load content dynamically after initial page load. For heavy apps like Gmail, prefer `--wait dom` to avoid long render waits.
 - **Global flags**: `--tab <id>` targets a specific tab, `--text` for human-readable output, `--timeout <s>` for request timeout.
 - **Session persistence**: The proxy reconnects to an existing Chrome if one is already running on the CDP port. Sessions, cookies, and tabs survive proxy restarts.
 - **Hidden overlays (Gmail compose, etc.)**: Content inside `aria-hidden` ancestors is excluded from the a11y tree. Use `--scope "[role='dialog']"` with `read-page` to target the overlay directly.

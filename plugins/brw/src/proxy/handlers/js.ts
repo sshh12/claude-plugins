@@ -1,6 +1,34 @@
 import type { CDPManager } from '../cdp.js';
 import type { ApiResponse } from '../../shared/types.js';
 
+// Serializer function injected into the page to handle DOMRect, DOMPoint, etc.
+const DOM_SERIALIZER = `function(obj) {
+  function serialize(v) {
+    if (v === null || v === undefined) return v;
+    if (typeof v !== 'object') return v;
+    if (v instanceof DOMRect || v instanceof DOMRectReadOnly) {
+      return { x: v.x, y: v.y, width: v.width, height: v.height, top: v.top, right: v.right, bottom: v.bottom, left: v.left };
+    }
+    if (typeof DOMPoint !== 'undefined' && (v instanceof DOMPoint || v instanceof DOMPointReadOnly)) {
+      return { x: v.x, y: v.y, z: v.z, w: v.w };
+    }
+    if (typeof DOMMatrix !== 'undefined' && v instanceof DOMMatrix) {
+      return { a: v.a, b: v.b, c: v.c, d: v.d, e: v.e, f: v.f };
+    }
+    if (typeof CSSStyleDeclaration !== 'undefined' && v instanceof CSSStyleDeclaration) {
+      var o = {}; for (var i = 0; i < v.length; i++) { var p = v[i]; o[p] = v.getPropertyValue(p); } return o;
+    }
+    if (Array.isArray(v)) return v.map(serialize);
+    if (v.constructor === Object || Object.getPrototypeOf(v) === Object.prototype) {
+      var result = {};
+      for (var key in v) { if (v.hasOwnProperty(key)) result[key] = serialize(v[key]); }
+      return result;
+    }
+    try { return JSON.parse(JSON.stringify(v)); } catch(e) { return String(v); }
+  }
+  return serialize(obj);
+}`;
+
 export async function handleJs(
   cdp: CDPManager,
   params: {
@@ -12,9 +40,10 @@ export async function handleJs(
   const tabId = params.tab;
   const client = cdp.getClient(tabId);
 
+  // Step 1: Evaluate with returnByValue: false to get a RemoteObject reference
   const evalOptions: any = {
     expression: params.expression,
-    returnByValue: true,
+    returnByValue: false,
     awaitPromise: true,
     timeout: 30000,
   };
@@ -43,19 +72,68 @@ export async function handleJs(
     };
   }
 
-  // Serialize the result
-  let resultValue: any;
   const remoteObj = result.result;
 
+  // Step 2: For primitives, use value directly
   if (remoteObj.type === 'undefined') {
-    resultValue = undefined;
-  } else if (remoteObj.value !== undefined) {
-    resultValue = remoteObj.value;
-  } else if (remoteObj.description) {
-    resultValue = remoteObj.description;
-  } else {
-    resultValue = null;
+    return { ok: true, result: undefined };
   }
 
+  if (remoteObj.type !== 'object' || remoteObj.subtype === 'null') {
+    const resultValue = remoteObj.value !== undefined ? remoteObj.value : remoteObj.description ?? null;
+    return { ok: true, result: resultValue };
+  }
+
+  // Step 3: For objects, use callFunctionOn with serializer to handle DOMRect etc.
+  if (remoteObj.objectId) {
+    try {
+      const serialized = await client.Runtime.callFunctionOn({
+        objectId: remoteObj.objectId,
+        functionDeclaration: DOM_SERIALIZER,
+        arguments: [{ objectId: remoteObj.objectId }],
+        returnByValue: true,
+      });
+
+      // Release the RemoteObject
+      try { await client.Runtime.releaseObject({ objectId: remoteObj.objectId }); } catch { /* ignore */ }
+
+      if (serialized.exceptionDetails) {
+        // Serializer failed — fall back to returnByValue
+        return await handleJsFallback(client, params, evalOptions);
+      }
+
+      return { ok: true, result: serialized.result?.value ?? null };
+    } catch {
+      // callFunctionOn failed — fall back
+      try { await client.Runtime.releaseObject({ objectId: remoteObj.objectId }); } catch { /* ignore */ }
+      return await handleJsFallback(client, params, evalOptions);
+    }
+  }
+
+  // No objectId — use value or description
+  const resultValue = remoteObj.value !== undefined ? remoteObj.value : remoteObj.description ?? null;
   return { ok: true, result: resultValue };
+}
+
+async function handleJsFallback(
+  client: any,
+  params: { expression: string; frame?: string },
+  baseOptions: any
+): Promise<ApiResponse> {
+  const fallbackResult = await client.Runtime.evaluate({
+    ...baseOptions,
+    returnByValue: true,
+  });
+
+  if (fallbackResult.exceptionDetails) {
+    return {
+      ok: false,
+      error: fallbackResult.exceptionDetails.exception?.description || 'JavaScript evaluation error',
+      code: 'JS_ERROR',
+    };
+  }
+
+  const obj = fallbackResult.result;
+  const value = obj.type === 'undefined' ? undefined : (obj.value !== undefined ? obj.value : obj.description ?? null);
+  return { ok: true, result: value };
 }

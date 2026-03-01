@@ -297,6 +297,8 @@ brw wait-for --network-idle [--timeout N] [--tab ID]
 
 Returns `matched: true/false` — does NOT error on timeout. Polls at 100ms intervals.
 
+Note: `--timeout` here is the handler timeout (how long `wait-for` polls). This is distinct from the global CLI `--timeout` (HTTP socket timeout). The CLI timeout auto-extends when `--timeout` is passed to `wait-for`.
+
 ---
 
 ## Tabs
@@ -523,6 +525,18 @@ brw server stop [--port PORT]
 brw server status [--port PORT]
 ```
 
+### `brw log`
+
+```bash
+brw log [--lines N]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--lines` | 50 | Number of recent log lines to show |
+
+Shows recent proxy log entries directly from the log file (no running proxy required). Useful for diagnosing Chrome crashes, CDP errors, and tab loss. Logs include timestamps, request durations, and error details.
+
 ### `brw config`
 
 ```bash
@@ -549,6 +563,7 @@ Priority (highest wins): Environment variables > `.claude/brw.json` > `~/.config
 | Window size | `BRW_WIDTH` / `BRW_HEIGHT` | 1280 x 800 |
 | URL allowlist | `BRW_ALLOWED_URLS` | `*` (all) |
 | Auto-screenshot | `BRW_AUTO_SCREENSHOT` | true |
+| Log file | `BRW_LOG_FILE` | `/tmp/brw-proxy.log` |
 
 ---
 

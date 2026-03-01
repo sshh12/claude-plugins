@@ -15,6 +15,7 @@ interface CDPClient {
   Fetch: any;
   close: () => Promise<void>;
   on: (event: string, handler: (...args: any[]) => void) => void;
+  removeListener: (event: string, handler: (...args: any[]) => void) => void;
 }
 
 interface FrameContextInfo {
@@ -522,6 +523,27 @@ export class CDPManager {
   async closeTab(tabId: string): Promise<TabInfo[]> {
     const resolved = this.resolveTabId(tabId);
     const tab = this.tabs.get(resolved);
+
+    // Use Target.closeTarget via an existing CDP client for reliable tab closure
+    let closed = false;
+    if (tab) {
+      try {
+        const result = await tab.client.Target.closeTarget({ targetId: resolved });
+        closed = !!result?.success;
+      } catch {
+        // Fall back to CDP.Close HTTP helper
+      }
+    }
+
+    if (!closed) {
+      try {
+        await CDP.Close({ port: this.cdpPort, id: resolved });
+      } catch {
+        // ignore
+      }
+    }
+
+    // Close client connection AFTER the target is closed
     if (tab) {
       try {
         await tab.client.close();
@@ -530,7 +552,6 @@ export class CDPManager {
       }
       this.tabs.delete(resolved);
     }
-    await CDP.Close({ port: this.cdpPort, id: resolved });
 
     // Clean up aliases pointing to closed tab
     for (const [alias, tid] of this.tabAliases) {

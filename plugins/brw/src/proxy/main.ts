@@ -37,20 +37,24 @@ import { handleEmulate } from './handlers/emulate.js';
 import { handlePerf } from './handlers/perf.js';
 import { handleProfileList, handleProfileShow } from './handlers/profile.js';
 import { handleRunAction } from './handlers/run-action.js';
+import { createLogger, readLogTail } from './logger.js';
+import type { Logger } from './logger.js';
 
 let config: BrwConfig;
 let cdp: CDPManager;
+let logger: Logger;
 let chromeProcess: Awaited<ReturnType<typeof launchChrome>> | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 let lastActivity = Date.now();
 let chromeCrashed = false;
 let isRelaunching = false;
+let lastCrashTime: number | null = null;
 
 function resetIdleTimer() {
   lastActivity = Date.now();
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    console.error(`[brw-proxy] Idle timeout (${config.idleTimeout}s), shutting down`);
+    logger.info(`Idle timeout (${config.idleTimeout}s), shutting down`);
     shutdown();
   }, config.idleTimeout * 1000);
 }
@@ -104,7 +108,7 @@ async function setupInitialTab(cdpMgr: CDPManager, cfg: BrwConfig): Promise<void
     // Refresh tab list — navigation to about:blank can change target IDs
     await cdpMgr.listTabs();
   } catch (err) {
-    console.error('[brw-proxy] Warning: failed to set initial viewport/blank page:', err);
+    logger.warn(`Failed to set initial viewport/blank page: ${err}`);
   }
 }
 
@@ -121,7 +125,7 @@ async function relaunchChrome(): Promise<void> {
   }
   isRelaunching = true;
   try {
-    console.error('[brw-proxy] Relaunching Chrome...');
+    logger.info('Relaunching Chrome...');
     await cdp.closeAll();
 
     // Try reconnecting to existing Chrome first
@@ -130,7 +134,7 @@ async function relaunchChrome(): Promise<void> {
       const targets = await CDP.List({ port: config.cdpPort });
       const pageTargets = targets.filter((t: any) => t.type === 'page');
       if (pageTargets.length > 0) {
-        console.error(`[brw-proxy] Found existing Chrome on CDP port ${config.cdpPort} (${pageTargets.length} tabs)`);
+        logger.info(`Found existing Chrome on CDP port ${config.cdpPort} (${pageTargets.length} tabs)`);
         chromeProcess = null;
         reconnected = true;
       }
@@ -154,9 +158,9 @@ async function relaunchChrome(): Promise<void> {
     }
 
     chromeCrashed = false;
-    console.error('[brw-proxy] Chrome relaunched and connected');
+    logger.info('Chrome relaunched and connected');
   } catch (err) {
-    console.error('[brw-proxy] Chrome relaunch failed:', err);
+    logger.error(`Chrome relaunch failed: ${err}`);
     throw err;
   } finally {
     isRelaunching = false;
@@ -165,17 +169,18 @@ async function relaunchChrome(): Promise<void> {
 
 function setupChromeExitHandler() {
   chromeProcess?.on('exit', (code) => {
-    console.error(`[brw-proxy] Chrome exited with code ${code}`);
+    logger.warn(`Chrome exited with code ${code}`);
     // Don't set crashed flag if we're shutting down
     if (!chromeProcess?.killed) {
-      console.error('[brw-proxy] Chrome crashed, will relaunch on next command');
+      logger.error('Chrome crashed, will relaunch on next command');
       chromeCrashed = true;
+      lastCrashTime = Date.now();
     }
   });
 }
 
 async function shutdown() {
-  console.error('[brw-proxy] Shutting down...');
+  logger.info('Shutting down...');
   try {
     await cdp?.closeAll();
   } catch {
@@ -203,6 +208,8 @@ function mutationHandler(
   options?: { skipAutoScreenshotOverride?: boolean }
 ): (request: any, reply: any) => Promise<void> {
   return async (request, reply) => {
+    const reqStart = Date.now();
+    const reqUrl = (request.url as string) || '';
     resetIdleTimer();
 
     // Chrome crash recovery: relaunch if crashed
@@ -210,6 +217,7 @@ function mutationHandler(
       try {
         await relaunchChrome();
       } catch (err: any) {
+        logger.error(`${reqUrl} crashed Chrome relaunch failed`, { error: err?.message });
         reply.send({
           ok: false,
           error: `Chrome crashed and relaunch failed: ${err?.message || 'Unknown error'}`,
@@ -278,8 +286,10 @@ function mutationHandler(
         }
       }
 
+      logger.info(`${reqUrl} ${Date.now() - reqStart}ms`, { ok: result.ok, tab: tabId || 'active' });
       reply.send(result);
     } catch (err: any) {
+      logger.error(`${reqUrl} ${Date.now() - reqStart}ms`, { error: err?.message, tab: tabId || 'active' });
       reply.send(errorResponse(err));
     } finally {
       release?.();
@@ -294,6 +304,8 @@ function readHandler(
   handler: (body: any) => Promise<ApiResponse>
 ): (request: any, reply: any) => Promise<void> {
   return async (request, reply) => {
+    const reqStart = Date.now();
+    const reqUrl = (request.url as string) || '';
     resetIdleTimer();
 
     // Chrome crash recovery: relaunch if crashed
@@ -301,6 +313,7 @@ function readHandler(
       try {
         await relaunchChrome();
       } catch (err: any) {
+        logger.error(`${reqUrl} crashed Chrome relaunch failed`, { error: err?.message });
         reply.send({
           ok: false,
           error: `Chrome crashed and relaunch failed: ${err?.message || 'Unknown error'}`,
@@ -313,8 +326,10 @@ function readHandler(
     const body = (request.body as any) || (request.query as any) || {};
     try {
       const result = await handler(body);
+      logger.info(`${reqUrl} ${Date.now() - reqStart}ms`, { ok: result.ok });
       reply.send(result);
     } catch (err: any) {
+      logger.error(`${reqUrl} ${Date.now() - reqStart}ms`, { error: err?.message });
       reply.send(errorResponse(err));
     }
   };
@@ -381,6 +396,7 @@ function getErrorHint(code: string): string {
 
 async function main() {
   config = getConfig();
+  logger = createLogger(config.logFile);
 
   // Create download directory
   const downloadDir = join(config.screenshotDir, 'downloads');
@@ -392,7 +408,7 @@ async function main() {
     const targets = await CDP.List({ port: config.cdpPort });
     const pageTargets = targets.filter((t: any) => t.type === 'page');
     if (pageTargets.length > 0) {
-      console.error(`[brw-proxy] Found existing Chrome on CDP port ${config.cdpPort} (${pageTargets.length} tabs)`);
+      logger.info(`Found existing Chrome on CDP port ${config.cdpPort} (${pageTargets.length} tabs)`);
       existingChrome = true;
       chromeProcess = null;
     }
@@ -401,17 +417,17 @@ async function main() {
   }
 
   if (!existingChrome) {
-    console.error(`[brw-proxy] Launching Chrome on CDP port ${config.cdpPort}...`);
+    logger.info(`Launching Chrome on CDP port ${config.cdpPort}...`);
     chromeProcess = await launchChrome(config);
     setupChromeExitHandler();
   }
 
   // Connect to Chrome via CDP
-  console.error('[brw-proxy] Connecting to Chrome CDP...');
+  logger.info('Connecting to Chrome CDP...');
   cdp = new CDPManager(config.cdpPort, downloadDir);
   cdp.setViewport(config.windowWidth, config.windowHeight);
   await cdp.connect();
-  console.error('[brw-proxy] Connected to Chrome CDP');
+  logger.info('Connected to Chrome CDP');
 
   // Set initial viewport on the default tab and clear the NTP (only for fresh Chrome)
   if (!existingChrome) {
@@ -445,6 +461,7 @@ async function main() {
       uptime: Math.round((Date.now() - lastActivity) / 1000),
       cdpConnected: cdpOk,
       chromeCrashed,
+      lastCrashTime,
     };
   });
 
@@ -454,6 +471,14 @@ async function main() {
       process.nextTick(shutdown);
     });
     return { ok: true };
+  });
+
+  // Log endpoint — returns last N lines of the proxy log
+  server.get('/api/log', async (request) => {
+    const query = (request.query as any) || {};
+    const lines = parseInt(query.lines, 10) || 50;
+    const tail = readLogTail(config.logFile, lines);
+    return { ok: true, log: tail };
   });
 
   // --- Mutation endpoints (with per-tab mutex) ---
@@ -673,9 +698,9 @@ async function main() {
 
   try {
     await server.listen({ port: config.proxyPort, host: '127.0.0.1' });
-    console.error(`[brw-proxy] Listening on http://127.0.0.1:${config.proxyPort}`);
+    logger.info(`Listening on http://127.0.0.1:${config.proxyPort}`);
   } catch (err) {
-    console.error(`[brw-proxy] Failed to start server:`, err);
+    logger.error(`Failed to start server: ${err}`);
     removePidFile();
     process.exit(1);
   }
@@ -686,7 +711,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[brw-proxy] Fatal error:', err);
+  console.error('[brw-proxy] Fatal error:', err); // logger may not be initialized yet
   removePidFile();
   process.exit(1);
 });

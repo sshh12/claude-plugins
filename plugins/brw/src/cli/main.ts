@@ -9,7 +9,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.5.1')
+  .version('0.5.2')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--text', 'Output as plain text instead of JSON')
@@ -42,6 +42,11 @@ async function run(
   const globals = getGlobalOpts();
   if (body.tab === undefined && globals.tab) {
     body.tab = globals.tab;
+  }
+
+  // Auto-extend HTTP timeout when the handler has its own timeout
+  if (typeof body.timeout === 'number' && body.timeout > 0) {
+    globals.timeout = Math.max(globals.timeout, body.timeout + 10);
   }
 
   try {
@@ -94,6 +99,7 @@ async function run(
 
 program
   .command('screenshot')
+  .allowUnknownOption()
   .description('Capture a screenshot of the current page')
   .option('--region <coords>', 'Crop to bounding box x1,y1,x2,y2')
   .option('--ref <ref>', 'Screenshot a single element by ref ID')
@@ -110,6 +116,7 @@ program
 
 program
   .command('click [x] [y]')
+  .allowUnknownOption()
   .description('Click at coordinates or element')
   .option('--ref <ref>', 'Click element by ref ID')
   .option('--selector <css>', 'Click element by CSS selector')
@@ -139,6 +146,7 @@ program
 
 program
   .command('hover [x] [y]')
+  .allowUnknownOption()
   .description('Hover at coordinates or element')
   .option('--ref <ref>', 'Hover element by ref ID')
   .option('--selector <css>', 'Hover element by CSS selector')
@@ -160,6 +168,7 @@ program
 
 program
   .command('type <text>')
+  .allowUnknownOption()
   .description('Type text into the focused element')
   .option('--clear', 'Clear field before typing')
   .option('--no-screenshot', 'Skip auto-screenshot')
@@ -175,6 +184,7 @@ program
 
 program
   .command('key <keys>')
+  .allowUnknownOption()
   .description('Press keyboard keys/shortcuts')
   .option('--repeat <n>', 'Number of times to press', '1')
   .option('--no-screenshot', 'Skip auto-screenshot')
@@ -190,6 +200,7 @@ program
 
 program
   .command('navigate <url>')
+  .allowUnknownOption()
   .description('Navigate to URL, or "back"/"forward"')
   .option('--wait <strategy>', 'Wait strategy: none, dom, network, render (full SPA render)', 'dom')
   .option('--no-screenshot', 'Skip auto-screenshot')
@@ -205,6 +216,7 @@ program
 
 program
   .command('scroll <direction>')
+  .allowUnknownOption()
   .description('Scroll the page (up, down, left, right)')
   .option('--amount <n>', 'Number of scroll ticks', '3')
   .option('--at <coords>', 'Scroll element at x,y coordinates')
@@ -229,6 +241,7 @@ program
 
 program
   .command('scroll-to')
+  .allowUnknownOption()
   .description('Scroll an element into view')
   .option('--ref <ref>', 'Element ref ID')
   .option('--selector <css>', 'CSS selector')
@@ -249,6 +262,7 @@ program
 
 program
   .command('drag [x1] [y1] [x2] [y2]')
+  .allowUnknownOption()
   .description('Drag from one point to another')
   .option('--from-ref <ref>', 'Start element ref ID')
   .option('--to-ref <ref>', 'End element ref ID')
@@ -270,6 +284,7 @@ program
 
 program
   .command('tabs')
+  .allowUnknownOption()
   .description('List all browser tabs')
   .action(async () => {
     await run('GET', '/api/tabs', {});
@@ -279,6 +294,7 @@ program
 
 program
   .command('new-tab [url]')
+  .allowUnknownOption()
   .description('Open a URL in a new tab')
   .action(async (url) => {
     await run('POST', '/api/tabs/new', { url });
@@ -288,6 +304,7 @@ program
 
 program
   .command('switch-tab <id>')
+  .allowUnknownOption()
   .description('Switch to a tab by ID')
   .option('--no-screenshot', 'Skip auto-screenshot')
   .action(async (id, opts) => {
@@ -301,6 +318,7 @@ program
 
 program
   .command('close-tab <id>')
+  .allowUnknownOption()
   .description('Close a tab by ID')
   .action(async (id) => {
     await run('POST', '/api/tabs/close', { tabId: id });
@@ -310,6 +328,7 @@ program
 
 program
   .command('name-tab <alias> [tabId]')
+  .allowUnknownOption()
   .description('Name the current or specified tab with an alias')
   .action(async (alias, tabId) => {
     await run('POST', '/api/tabs/name', { alias, tabId });
@@ -319,6 +338,7 @@ program
 
 program
   .command('wait')
+  .allowUnknownOption()
   .description('Wait for a duration')
   .option('--duration <seconds>', 'Seconds to wait', '2')
   .option('--no-screenshot', 'Skip auto-screenshot')
@@ -333,6 +353,7 @@ program
 
 program
   .command('wait-for')
+  .allowUnknownOption()
   .description('Wait for a condition')
   .option('--selector <css>', 'Wait for CSS selector to match')
   .option('--text <text>', 'Wait for text to appear on page')
@@ -357,6 +378,7 @@ program
 
 program
   .command('read-page')
+  .allowUnknownOption()
   .description('Read the page accessibility tree')
   .option('--filter <mode>', 'Filter: all or interactive', 'all')
   .option('--search <text>', 'Search for elements by text')
@@ -383,6 +405,7 @@ program
 
 program
   .command('get-text')
+  .allowUnknownOption()
   .description('Extract main content text from the page')
   .option('--max-chars <n>', 'Truncate output')
   .action(async (opts) => {
@@ -395,6 +418,7 @@ program
 
 program
   .command('form-input')
+  .allowUnknownOption()
   .description('Set a form element value')
   .option('--ref <ref>', 'Element ref ID')
   .option('--selector <css>', 'CSS selector')
@@ -413,6 +437,7 @@ program
 
 program
   .command('js [expression]')
+  .allowUnknownOption()
   .description('Execute JavaScript in the page')
   .option('--file <path>', 'Read JavaScript from a file instead of argument')
   .option('--frame <target>', 'Target iframe by index, name, or URL')
@@ -449,6 +474,7 @@ program
 
 program
   .command('dialog [action]')
+  .allowUnknownOption()
   .description('Handle browser dialogs (accept, dismiss, or check)')
   .option('--text <response>', 'Response text for prompt dialogs')
   .option('--no-screenshot', 'Skip auto-screenshot')
@@ -464,6 +490,7 @@ program
 
 program
   .command('console')
+  .allowUnknownOption()
   .description('Read captured console messages')
   .option('--errors-only', 'Only error-level messages')
   .option('--pattern <regex>', 'Filter by regex pattern')
@@ -482,6 +509,7 @@ program
 
 program
   .command('network')
+  .allowUnknownOption()
   .description('Read captured network requests')
   .option('--url-pattern <pattern>', 'Filter by URL pattern')
   .option('--limit <n>', 'Max requests to return')
@@ -498,6 +526,7 @@ program
 
 program
   .command('network-body <requestId>')
+  .allowUnknownOption()
   .description('Get response body for a captured network request')
   .action(async (requestId) => {
     await run('POST', '/api/network-body', { requestId });
@@ -507,6 +536,7 @@ program
 
 program
   .command('file-upload')
+  .allowUnknownOption()
   .description('Upload files to a file input element')
   .option('--ref <ref>', 'Element ref ID')
   .requiredOption('--files <paths...>', 'File paths to upload')
@@ -670,6 +700,7 @@ interceptCmd
 
 program
   .command('resize <width> <height>')
+  .allowUnknownOption()
   .description('Resize the browser viewport')
   .option('--no-screenshot', 'Skip auto-screenshot')
   .action(async (width, height, opts) => {
@@ -684,6 +715,7 @@ program
 
 program
   .command('pdf')
+  .allowUnknownOption()
   .description('Save the current page as PDF')
   .option('--output <path>', 'Output file path')
   .option('--landscape', 'Landscape orientation')
@@ -704,6 +736,7 @@ program
 
 program
   .command('emulate [action]')
+  .allowUnknownOption()
   .description('Set device emulation')
   .option('--device <name>', 'Preset device name')
   .option('--width <n>', 'Viewport width')
@@ -740,6 +773,7 @@ program
 
 program
   .command('perf')
+  .allowUnknownOption()
   .description('Get performance metrics')
   .action(async () => {
     await run('GET', '/api/perf', {});
@@ -802,6 +836,7 @@ gifCmd
 
 program
   .command('quick <commands>')
+  .allowUnknownOption()
   .description('Execute quick mode commands')
   .option('--no-screenshot', 'Skip final screenshot')
   .action(async (commands, opts) => {
@@ -835,6 +870,7 @@ profileCmd
 
 program
   .command('run <target>')
+  .allowUnknownOption()
   .description('Run a profile action (format: profile:action)')
   .option('--param <kv...>', 'Action parameters as key=value pairs')
   .option('--no-screenshot', 'Skip auto-screenshot')
@@ -856,10 +892,30 @@ program
     });
   });
 
+// ---- log ----
+
+program
+  .command('log')
+  .allowUnknownOption()
+  .description('Show recent proxy log entries')
+  .option('--lines <n>', 'Number of log lines to show', '50')
+  .action(async (opts) => {
+    const { readLogTail } = await import('../proxy/logger.js');
+    const logFile = config.logFile || '/tmp/brw-proxy.log';
+    const lines = parseInt(opts.lines, 10) || 50;
+    const tail = readLogTail(logFile, lines);
+    if (tail.trim()) {
+      process.stdout.write(tail + '\n');
+    } else {
+      process.stdout.write('No log entries found. The proxy may not have started yet.\n');
+    }
+  });
+
 // ---- config ----
 
 program
   .command('config')
+  .allowUnknownOption()
   .description('Show resolved configuration')
   .action(async () => {
     // Config is read locally, no proxy needed

@@ -15,6 +15,7 @@ const DEFAULTS: BrwConfig = {
   windowHeight: 800,
   allowedUrls: ['*'],
   autoScreenshot: true,
+  logFile: '/tmp/brw-proxy.log',
 };
 
 interface ConfigFile {
@@ -29,6 +30,7 @@ interface ConfigFile {
   windowHeight?: number;
   allowedUrls?: string[];
   autoScreenshot?: boolean;
+  logFile?: string;
 }
 
 function loadJsonFile(path: string): ConfigFile | null {
@@ -153,6 +155,7 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
     windowHeight: resolveNumber(env.BRW_HEIGHT, repoConfig?.windowHeight, userConfig?.windowHeight, DEFAULTS.windowHeight),
     allowedUrls: resolveStringArray(env.BRW_ALLOWED_URLS, repoConfig?.allowedUrls, userConfig?.allowedUrls, DEFAULTS.allowedUrls),
     autoScreenshot: resolveBoolean(env.BRW_AUTO_SCREENSHOT, repoConfig?.autoScreenshot, userConfig?.autoScreenshot, DEFAULTS.autoScreenshot),
+    logFile: resolveString(env.BRW_LOG_FILE, repoConfig?.logFile, userConfig?.logFile, DEFAULTS.logFile),
   };
 }
 

@@ -162,15 +162,17 @@ const TREE_SCRIPT = `
       }
     }
 
-    // Search filter — match name, aria-label, aria-description, and textContent
+    // Search filter — match name, aria-label, aria-description; textContent only for interactive/semantic elements
     if (search) {
       const searchLower = search.toLowerCase();
       const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
       const ariaDesc = (el.getAttribute('aria-description') || '').toLowerCase();
-      const matchesSelf = name.toLowerCase().includes(searchLower) ||
+      let matchesSelf = name.toLowerCase().includes(searchLower) ||
         ariaLabel.includes(searchLower) ||
-        ariaDesc.includes(searchLower) ||
-        (el.textContent || '').toLowerCase().includes(searchLower);
+        ariaDesc.includes(searchLower);
+      if (!matchesSelf && (interactive || role !== 'generic')) {
+        matchesSelf = (el.textContent || '').toLowerCase().includes(searchLower);
+      }
       if (!matchesSelf && children.length === 0) return null;
     }
 
