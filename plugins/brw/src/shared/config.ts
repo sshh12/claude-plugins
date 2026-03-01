@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import type { BrwConfig, ConfigSource, ResolvedConfig, ResolvedConfigEntry } from './types.js';
 
@@ -37,6 +37,26 @@ function loadJsonFile(path: string): ConfigFile | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Walk up the directory tree from startDir looking for .claude/brw.json.
+ * Stops at filesystem root or home directory.
+ */
+function findRepoConfigFile(startDir: string): ConfigFile | null {
+  const home = homedir();
+  let dir = startDir;
+
+  while (true) {
+    const config = loadJsonFile(join(dir, '.claude', 'brw.json'));
+    if (config) return config;
+
+    const parent = dirname(dir);
+    if (parent === dir || dir === home) break;
+    dir = parent;
+  }
+
+  return null;
 }
 
 function entry<T>(value: T, source: ConfigSource): ResolvedConfigEntry<T> {
@@ -115,7 +135,7 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
 
   // Load config files (lower priority first)
   const userConfig = loadJsonFile(join(homedir(), '.config', 'brw', 'config.json'));
-  const repoConfig = loadJsonFile(join(workDir, '.claude', 'brw.json'));
+  const repoConfig = findRepoConfigFile(workDir);
 
   const env = process.env;
 

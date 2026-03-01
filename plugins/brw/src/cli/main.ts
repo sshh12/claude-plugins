@@ -9,7 +9,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.1.0')
+  .version('0.2.0')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--text', 'Output as plain text instead of JSON')
@@ -384,12 +384,35 @@ program
 // ---- js ----
 
 program
-  .command('js <expression>')
+  .command('js [expression]')
   .description('Execute JavaScript in the page')
+  .option('--file <path>', 'Read JavaScript from a file instead of argument')
   .option('--frame <target>', 'Target iframe by index, name, or URL')
   .action(async (expression, opts) => {
+    let jsCode = expression;
+
+    if (opts.file) {
+      const { readFileSync, existsSync } = await import('fs');
+      if (!existsSync(opts.file)) {
+        process.stderr.write(`Error: file not found: ${opts.file}\n`);
+        process.exit(ExitCode.USAGE_ERROR);
+      }
+      jsCode = readFileSync(opts.file, 'utf-8');
+    } else if (expression === '-' || (!expression && !process.stdin.isTTY)) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk as Buffer);
+      }
+      jsCode = Buffer.concat(chunks).toString('utf-8');
+    }
+
+    if (!jsCode) {
+      process.stderr.write('Error: provide an expression, --file <path>, or pipe via stdin\n');
+      process.exit(ExitCode.USAGE_ERROR);
+    }
+
     await run('POST', '/api/js', {
-      expression,
+      expression: jsCode,
       frame: opts.frame,
     });
   });
@@ -850,12 +873,27 @@ serverCmd
   .description('Stop the proxy server')
   .action(async () => {
     const globals = getGlobalOpts();
+    const { readPidFile, isProcessRunning } = await import('../proxy/chrome.js');
+    const pidData = readPidFile();
+
     try {
-      const result = await proxyRequest('POST', '/shutdown', {}, globals.port, globals.timeout, globals.debug);
-      process.stdout.write(formatOutput(result, globals.text) + '\n');
+      await proxyRequest('POST', '/shutdown', {}, globals.port, 5, globals.debug);
     } catch {
-      process.stdout.write(formatOutput({ ok: true }, globals.text) + '\n');
+      // Server might already be dead
     }
+
+    // Wait for process to actually exit
+    if (pidData?.pid) {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && isProcessRunning(pidData.pid)) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (isProcessRunning(pidData.pid)) {
+        try { process.kill(pidData.pid, 'SIGKILL'); } catch { /* ignore */ }
+      }
+    }
+
+    process.stdout.write(formatOutput({ ok: true }, globals.text) + '\n');
   });
 
 serverCmd

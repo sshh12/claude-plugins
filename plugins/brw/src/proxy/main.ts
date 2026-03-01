@@ -90,7 +90,7 @@ async function setupInitialTab(cdpMgr: CDPManager, cfg: BrwConfig): Promise<void
     await client.Emulation.setDeviceMetricsOverride({
       width: cfg.windowWidth,
       height: cfg.windowHeight,
-      deviceScaleFactor: 0,
+      deviceScaleFactor: 1,
       mobile: false,
     });
 
@@ -382,10 +382,12 @@ async function main() {
     };
   });
 
-  // Shutdown
+  // Shutdown — start shutdown after response is fully flushed
   server.post('/shutdown', async (_, reply) => {
-    reply.send({ ok: true });
-    setTimeout(shutdown, 100);
+    reply.raw.on('finish', () => {
+      process.nextTick(shutdown);
+    });
+    return { ok: true };
   });
 
   // --- Mutation endpoints (with per-tab mutex) ---

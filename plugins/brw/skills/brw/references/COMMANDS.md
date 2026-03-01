@@ -210,9 +210,19 @@ Output: `{"ok": true, "title": "...", "url": "...", "text": "..."}`
 
 ```bash
 brw js <expression> [--frame INDEX|NAME] [--tab ID]
+brw js --file <path> [--frame INDEX|NAME] [--tab ID]
+brw js - [--frame INDEX|NAME] [--tab ID]
+cat script.js | brw js [--frame INDEX|NAME] [--tab ID]
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--file` | Read JavaScript from a file path |
+| `--frame` | Target iframe by index, name, or URL |
+
 Evaluates JavaScript in the page context. Supports `await` for async expressions. Returns serialized result.
+
+Use `-` as the expression or pipe to stdin for complex/multi-line JS to avoid shell quoting issues.
 
 ---
 

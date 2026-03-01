@@ -124,9 +124,13 @@ Set form values programmatically (triggers change/input events):
 
 ```bash
 /tmp/brw js "document.title"                           # Evaluate expression
+/tmp/brw js --file /tmp/script.js                      # Read JS from file
+cat script.js | /tmp/brw js -                          # Read JS from stdin
 /tmp/brw js "await fetch('/api').then(r => r.json())"  # Async expression
 /tmp/brw js "document.title" --frame 0                 # Execute in iframe
 ```
+
+For complex or multi-line JS, use `--file` or pipe via stdin to avoid shell quoting issues.
 
 ### Scroll
 

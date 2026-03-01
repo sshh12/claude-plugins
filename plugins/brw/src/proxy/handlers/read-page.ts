@@ -136,11 +136,18 @@ const TREE_SCRIPT = `
     // For interactive filter, skip non-interactive elements but still traverse children
     const include = filter === 'all' || interactive || role !== 'generic';
 
-    // Build children
+    // Build children (light DOM + shadow DOM)
     const children = [];
     for (const child of el.children) {
       const childNode = buildTree(child, depth + 1, maxDepth, filter, search);
       if (childNode) children.push(childNode);
+    }
+    // Traverse shadow DOM if present (open shadow roots only)
+    if (el.shadowRoot) {
+      for (const child of el.shadowRoot.children) {
+        const childNode = buildTree(child, depth + 1, maxDepth, filter, search);
+        if (childNode) children.push(childNode);
+      }
     }
 
     // Search filter
