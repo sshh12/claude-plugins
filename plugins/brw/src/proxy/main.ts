@@ -370,15 +370,26 @@ async function main() {
   // Create Fastify server
   const server = Fastify({ logger: false });
 
-  // Health check
+  // Health check — verify CDP connection is alive, not just the HTTP server
   server.get('/health', async () => {
     const chromePath = config.chromePath || detectChromePath();
+    let cdpOk = false;
+    try {
+      const tabId = cdp.getActiveTabId();
+      const client = cdp.getClient(tabId);
+      await client.Runtime.evaluate({ expression: '1', returnByValue: true, timeout: 2000 });
+      cdpOk = true;
+    } catch {
+      cdpOk = false;
+    }
     return {
-      ok: true,
+      ok: cdpOk && !chromeCrashed,
       pid: process.pid,
       port: config.proxyPort,
       chromeVersion: chromePath ? getChromeVersion(chromePath) : null,
       uptime: Math.round((Date.now() - lastActivity) / 1000),
+      cdpConnected: cdpOk,
+      chromeCrashed,
     };
   });
 

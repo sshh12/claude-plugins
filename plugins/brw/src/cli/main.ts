@@ -54,7 +54,22 @@ async function run(
   }
 
   try {
-    const result = await proxyRequest(method, endpoint, body, globals.port, globals.timeout, globals.debug);
+    let result = await proxyRequest(method, endpoint, body, globals.port, globals.timeout, globals.debug);
+
+    // Auto-restart on CDP errors (stale websocket, Chrome crash) — retry once
+    if (!result.ok && result.code === 'CDP_ERROR') {
+      if (globals.debug) {
+        process.stderr.write('[brw] CDP error, restarting proxy and retrying...\n');
+      }
+      try {
+        await proxyRequest('POST', '/shutdown', {}, globals.port, 5, false);
+      } catch { /* ignore */ }
+      // Wait for old proxy to die
+      await new Promise((r) => setTimeout(r, 1000));
+      const { startProxy } = await import('./proxy-launcher.js');
+      await startProxy(globals.port, undefined, undefined, globals.debug);
+      result = await proxyRequest(method, endpoint, body, globals.port, globals.timeout, globals.debug);
+    }
 
     process.stdout.write(formatOutput(result, globals.text) + '\n');
 
