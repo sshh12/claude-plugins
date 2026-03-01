@@ -6,6 +6,7 @@ Claude Code plugin marketplace.
 
 ```sh
 /plugin marketplace add sshh12/claude-plugins
+/plugin install <plugin-name>@shrivu-plugins
 ```
 
 ## Docs

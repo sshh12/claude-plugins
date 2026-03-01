@@ -1,6 +1,6 @@
 # claude-plugins
 
-Claude Code plugin marketplace by sshh12.
+Claude Code plugin marketplace by shrivu.
 
 ## Repo Structure
 
@@ -40,5 +40,5 @@ claude-plugins/
 
 ```sh
 /plugin marketplace add sshh12/claude-plugins
-/plugin install <plugin-name>@sshh12-plugins
+/plugin install <plugin-name>@shrivu-plugins
 ```

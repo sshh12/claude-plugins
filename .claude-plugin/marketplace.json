@@ -1,10 +1,10 @@
 {
-  "name": "sshh12-plugins",
+  "name": "shrivu-plugins",
   "owner": {
-    "name": "sshh12"
+    "name": "shrivu"
   },
   "metadata": {
-    "description": "Claude Code plugin marketplace by sshh12",
+    "description": "Claude Code plugin marketplace by shrivu",
     "version": "0.1.0",
     "pluginRoot": "./plugins"
   },
