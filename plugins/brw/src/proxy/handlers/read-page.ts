@@ -132,14 +132,14 @@ const TREE_SCRIPT = `
     return states;
   }
 
-  function buildTree(el, depth, maxDepth, filter, search) {
+  function buildTree(el, depth, maxDepth, filter, search, includeHidden) {
     if (depth > maxDepth) return null;
     if (!el || el.nodeType !== 1) return null;
 
     // Skip hidden elements
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') return null;
-    if (el.getAttribute('aria-hidden') === 'true') return null;
+    if (!includeHidden && el.getAttribute('aria-hidden') === 'true') return null;
 
     const role = getRole(el);
     const name = getAccessibleName(el);
@@ -151,13 +151,13 @@ const TREE_SCRIPT = `
     // Build children (light DOM + shadow DOM)
     const children = [];
     for (const child of el.children) {
-      const childNode = buildTree(child, depth + 1, maxDepth, filter, search);
+      const childNode = buildTree(child, depth + 1, maxDepth, filter, search, includeHidden);
       if (childNode) children.push(childNode);
     }
     // Traverse shadow DOM if present (open shadow roots only)
     if (el.shadowRoot) {
       for (const child of el.shadowRoot.children) {
-        const childNode = buildTree(child, depth + 1, maxDepth, filter, search);
+        const childNode = buildTree(child, depth + 1, maxDepth, filter, search, includeHidden);
         if (childNode) children.push(childNode);
       }
     }
@@ -220,7 +220,7 @@ const TREE_SCRIPT = `
   }
 
   const root = options.rootEl || document.body;
-  const tree = buildTree(root, 0, options.maxDepth || 30, options.filter || 'all', options.search || '');
+  const tree = buildTree(root, 0, options.maxDepth || 30, options.filter || 'all', options.search || '', !!options.includeHidden);
   return JSON.stringify({ tree, refCount: window.__brwRefCounter });
 })
 `;
@@ -237,6 +237,7 @@ export async function handleReadPage(
     search?: string;
     frame?: string;
     limit?: number;
+    includeHidden?: boolean;
   }
 ): Promise<ApiResponse> {
   const tabId = params.tab;
@@ -250,7 +251,8 @@ export async function handleReadPage(
       rootEl: window.__brwElementMap?.get(${JSON.stringify(params.ref)})?.deref(),
       filter: ${JSON.stringify(params.filter || 'all')},
       maxDepth: ${params.depth || 30},
-      search: ${JSON.stringify(params.search || '')}
+      search: ${JSON.stringify(params.search || '')},
+      includeHidden: ${!!params.includeHidden}
     })`;
   } else if (params.scope) {
     // Scope to a subtree by CSS selector
@@ -258,13 +260,15 @@ export async function handleReadPage(
       rootEl: document.querySelector(${JSON.stringify(params.scope)}),
       filter: ${JSON.stringify(params.filter || 'all')},
       maxDepth: ${params.depth || 30},
-      search: ${JSON.stringify(params.search || '')}
+      search: ${JSON.stringify(params.search || '')},
+      includeHidden: ${!!params.includeHidden}
     })`;
   } else {
     expression = `${TREE_SCRIPT}({
       filter: ${JSON.stringify(params.filter || 'all')},
       maxDepth: ${params.depth || 30},
-      search: ${JSON.stringify(params.search || '')}
+      search: ${JSON.stringify(params.search || '')},
+      includeHidden: ${!!params.includeHidden}
     })`;
   }
 

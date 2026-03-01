@@ -41,7 +41,22 @@ export async function handlePdf(
     marginRight: 0.4,
   };
 
-  const { data } = await client.Page.printToPDF(pdfOptions);
+  let data: string;
+  try {
+    const result = await client.Page.printToPDF(pdfOptions);
+    data = result.data;
+  } catch (err: any) {
+    const msg = err?.message || '';
+    if (msg.includes('PrintToPDF') || msg.includes('not implemented') || msg.includes('printToPDF')) {
+      return {
+        ok: false,
+        error: 'PDF generation requires headless mode',
+        code: 'CDP_ERROR',
+        hint: 'Set BRW_HEADLESS=true or start with: brw server start --headless',
+      };
+    }
+    throw err;
+  }
   const buffer = Buffer.from(data, 'base64');
 
   // Determine output path

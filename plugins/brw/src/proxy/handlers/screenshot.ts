@@ -40,7 +40,14 @@ export async function handleScreenshot(
       return { ok: false, error: `Ref ${params.ref} not found`, code: 'REF_NOT_FOUND' };
     }
     const rect = JSON.parse(result.result.value);
-    clip = { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scale: 1 };
+    // Enforce minimum dimensions for inline elements (e.g., <a>, <span>) that return 0x0
+    const MIN_W = 100, MIN_H = 40;
+    let { x, y, width, height } = rect;
+    if (width < MIN_W) { const cx = x + width / 2; x = cx - MIN_W / 2; width = MIN_W; }
+    if (height < MIN_H) { const cy = y + height / 2; y = cy - MIN_H / 2; height = MIN_H; }
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    clip = { x, y, width, height, scale: 1 };
   }
 
   // Handle --region: parse x1,y1,x2,y2

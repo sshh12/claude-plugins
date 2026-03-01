@@ -195,14 +195,18 @@ function setupChromeExitHandler() {
 }
 
 async function shutdown() {
-  audit('proxy_stop', {});
-  logger.info('Shutting down...');
+  await shutdownProxy(false);
+}
+
+async function shutdownProxy(keepChrome = false) {
+  audit('proxy_stop', { keepChrome });
+  logger.info(`Shutting down...${keepChrome ? ' (keeping Chrome alive)' : ''}`);
   try {
     await cdp?.closeAll();
   } catch {
     // ignore
   }
-  if (chromeProcess && !chromeProcess.killed) {
+  if (!keepChrome && chromeProcess && !chromeProcess.killed) {
     chromeProcess.kill('SIGTERM');
     // Force kill after 3s
     setTimeout(() => {
@@ -260,12 +264,18 @@ function mutationHandler(
     }
     const tabId = body.tab || cdp.getActiveTabId();
 
+    const HANDLER_TIMEOUT = 60_000; // 60s hard limit to prevent indefinite mutex hold
     let release: (() => void) | undefined;
     try {
       if (tabId) {
         release = await cdp.acquireMutex(tabId);
       }
-      const result = await handler(body);
+      const result = await Promise.race([
+        handler(body),
+        new Promise<ApiResponse>((_, reject) =>
+          setTimeout(() => reject(new Error('Handler timeout exceeded (60s)')), HANDLER_TIMEOUT)
+        ),
+      ]);
 
       // GIF frame capture: after successful mutation, capture a frame if recording
       if (result.ok && result.screenshot && tabId && isRecording(tabId)) {
@@ -514,13 +524,11 @@ async function main() {
   // Create Fastify server
   const server = Fastify({ logger: false });
 
-  // Health check — verify CDP connection is alive, not just the HTTP server
+  // Health check — lightweight, non-blocking CDP ping
   server.get('/health', async () => {
     const chromePath = config.chromePath || detectChromePath();
     let cdpOk = false;
     try {
-      // Refresh tab list to pick up any target ID changes
-      await cdp.listTabs();
       const tabId = cdp.getActiveTabId();
       if (tabId) {
         const client = cdp.getClient(tabId);
@@ -530,6 +538,8 @@ async function main() {
     } catch {
       cdpOk = false;
     }
+    // Schedule tab list refresh in background (don't await — avoids blocking health check)
+    cdp.listTabs().catch(() => {});
     return {
       ok: cdpOk && !chromeCrashed,
       pid: process.pid,
@@ -543,9 +553,11 @@ async function main() {
   });
 
   // Shutdown — start shutdown after response is fully flushed
-  server.post('/shutdown', async (_, reply) => {
+  server.post('/shutdown', async (request, reply) => {
+    const body = (request.body as any) || {};
+    const keepChrome = !!body.keepChrome;
     reply.raw.on('finish', () => {
-      process.nextTick(shutdown);
+      process.nextTick(() => shutdownProxy(keepChrome));
     });
     return { ok: true };
   });

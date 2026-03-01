@@ -7,8 +7,8 @@ Full reference for all brw CLI commands, flags, and output formats.
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--tab, -t <id>` | Target tab ID | Active tab |
-| `--text` | Plain text output instead of JSON | JSON |
-| `--timeout <seconds>` | CLI request timeout | 30 |
+| `--plain` | Plain text output instead of JSON | JSON |
+| `--http-timeout <seconds>` | CLI request timeout | 30 |
 | `--debug` | Verbose logging to stderr | Off |
 | `--port <port>` | Proxy server port | 9225 |
 | `--no-screenshot` | Skip auto-screenshot on mutation commands | Screenshot on |
@@ -188,6 +188,7 @@ brw read-page [--filter all|interactive] [--search TEXT] [--ref REF] [--scope CS
 | `--scope` | — | Return subtree rooted at CSS selector (alternative to --ref) |
 | `--depth` | unlimited | Max tree depth |
 | `--limit` | unlimited | Max number of ref elements to include (truncates tree with hint to use --search) |
+| `--include-hidden` | false | Include elements with `aria-hidden="true"` (useful for overlays, compose UIs) |
 | `--max-chars` | unlimited | Truncate output |
 | `--frame` | main frame | Target iframe by 0-based index, `name`/`id` attribute, or URL substring |
 
@@ -488,13 +489,15 @@ brw emulate reset [--tab ID]
 brw pdf [--output PATH] [--landscape] [--paper letter|a4|legal|tabloid] [--scale N] [--tab ID]
 ```
 
+**Note:** PDF generation requires headless mode. Set `BRW_HEADLESS=true` or start with `brw server start --headless`.
+
 ### `brw perf`
 
 ```bash
 brw perf [--tab ID]
 ```
 
-Returns: DOM node count, JS heap size, paint timing, layout count.
+Returns: DOM node count, DOM depth, JS heap size, paint timing, layout count. Supplements CDP metrics with live Runtime.evaluate data for accurate SPA metrics.
 
 ---
 
@@ -522,8 +525,12 @@ brw gif clear [--tab ID]
 ```bash
 brw server start [--port PORT] [--chrome-data-dir PATH] [--headless]
 brw server stop [--port PORT]
+brw server restart [--port PORT]
 brw server status [--port PORT]
 ```
+
+- `server stop` kills both the proxy and Chrome (all tabs lost)
+- `server restart` restarts only the proxy, keeping Chrome alive (tabs preserved)
 
 ### `brw log`
 

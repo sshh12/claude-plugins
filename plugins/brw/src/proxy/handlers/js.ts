@@ -55,9 +55,21 @@ export async function handleJs(
   const tabId = params.tab;
   const client = cdp.getClient(tabId);
 
+  // Auto-wrap await expressions in async IIFE
+  let expression = params.expression;
+  if (/\bawait\s/.test(expression)) {
+    const trimmed = expression.trim();
+    const lines = trimmed.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length === 1 && !trimmed.endsWith(';')) {
+      expression = `(async () => { return ${expression}; })()`;
+    } else {
+      expression = `(async () => { ${expression} })()`;
+    }
+  }
+
   // Step 1: Evaluate with returnByValue: false to get a RemoteObject reference
   const evalOptions: any = {
-    expression: params.expression,
+    expression,
     returnByValue: false,
     awaitPromise: true,
     timeout: 30000,

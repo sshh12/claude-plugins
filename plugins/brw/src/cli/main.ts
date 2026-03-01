@@ -9,11 +9,11 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.6.1')
+  .version('0.6.2')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--plain', 'Output as plain text instead of JSON')
-  .option('--timeout <seconds>', 'CLI request timeout', '30')
+  .option('--http-timeout <seconds>', 'CLI request timeout', '30')
   .option('--debug', 'Verbose logging to stderr')
   .option('--port <port>', 'Proxy server port');
 
@@ -27,7 +27,7 @@ function getGlobalOpts(): { tab?: string; text: boolean; timeout: number; debug:
   return {
     tab: opts.tab,
     text: !!opts.plain,
-    timeout: parseInt(opts.timeout, 10) || 30,
+    timeout: parseInt(opts.httpTimeout, 10) || 30,
     debug: !!opts.debug,
     port: getPort(),
   };
@@ -381,6 +381,7 @@ program
   .option('--max-chars <n>', 'Truncate output')
   .option('--frame <target>', 'Target iframe by index, name, or URL')
   .option('--limit <n>', 'Max number of ref elements to include')
+  .option('--include-hidden', 'Include elements with aria-hidden="true"')
   .action(async (opts) => {
     await run('POST', '/api/read-page', {
       filter: opts.filter,
@@ -391,6 +392,7 @@ program
       maxChars: opts.maxChars ? parseInt(opts.maxChars, 10) : undefined,
       frame: opts.frame,
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      includeHidden: opts.includeHidden,
     });
   });
 
@@ -1016,6 +1018,56 @@ serverCmd
     }
 
     process.stdout.write(formatOutput({ ok: true }, globals.text) + '\n');
+  });
+
+serverCmd
+  .command('restart')
+  .description('Restart the proxy server (keeps Chrome alive)')
+  .action(async () => {
+    const globals = getGlobalOpts();
+    const { readPidFile, isProcessRunning } = await import('../proxy/chrome.js');
+
+    // Send shutdown with keepChrome=true
+    try {
+      await proxyRequest('POST', '/shutdown', { keepChrome: true }, globals.port, 5, globals.debug);
+    } catch {
+      // Server might already be dead
+    }
+
+    // Wait for proxy process to exit
+    const pidData = readPidFile();
+    if (pidData?.pid) {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && isProcessRunning(pidData.pid)) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (isProcessRunning(pidData.pid)) {
+        try { process.kill(pidData.pid, 'SIGKILL'); } catch { /* ignore */ }
+      }
+    }
+
+    // Re-start proxy (will reconnect to existing Chrome via CDP.List)
+    try {
+      await ensureProxy(globals.port, globals.timeout, globals.debug);
+    } catch (err: any) {
+      const result = { ok: false, error: err?.message || 'Failed to restart proxy', code: 'PROXY_START_FAILED' };
+      process.stdout.write(formatOutput(result, globals.text) + '\n');
+      process.exit(ExitCode.PROXY_ERROR);
+    }
+
+    // Check health
+    try {
+      const result = await proxyRequest('GET', '/health', {}, globals.port, 5, globals.debug);
+      process.stdout.write(formatOutput({
+        ok: true,
+        restarted: true,
+        pid: result.pid,
+        port: result.port,
+        cdpConnected: result.cdpConnected,
+      }, globals.text) + '\n');
+    } catch {
+      process.stdout.write(formatOutput({ ok: true, restarted: true }, globals.text) + '\n');
+    }
   });
 
 serverCmd

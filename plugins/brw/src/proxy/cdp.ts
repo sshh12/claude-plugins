@@ -57,6 +57,7 @@ interface TabState {
 }
 
 const MAX_BUFFER_SIZE = 1000;
+const MAX_NETWORK_BODIES = 200;
 
 export class CDPManager {
   private tabs = new Map<string, TabState>();
@@ -247,38 +248,61 @@ export class CDPManager {
       state.frameContexts.clear();
     });
 
-    // Console buffer
+    // Console buffer — batched with microtask coalescing to reduce event-loop pressure
+    let consolePending: ConsoleMessage[] = [];
+    let consoleFlushScheduled = false;
+    const flushConsole = () => {
+      consoleFlushScheduled = false;
+      for (const msg of consolePending) {
+        state.consoleBuffer.push(msg);
+      }
+      consolePending = [];
+      while (state.consoleBuffer.length > MAX_BUFFER_SIZE) {
+        state.consoleBuffer.shift();
+      }
+    };
+
     client.on('Runtime.consoleAPICalled', (params: any) => {
-      const msg: ConsoleMessage = {
+      consolePending.push({
         level: params.type,
         text: params.args?.map((a: any) => a.value ?? a.description ?? '').join(' ') || '',
         timestamp: params.timestamp || Date.now(),
         source: 'console',
-      };
-      state.consoleBuffer.push(msg);
-      if (state.consoleBuffer.length > MAX_BUFFER_SIZE) {
-        state.consoleBuffer.shift();
+      });
+      if (!consoleFlushScheduled) {
+        consoleFlushScheduled = true;
+        queueMicrotask(flushConsole);
       }
     });
 
     client.on('Runtime.exceptionThrown', (params: any) => {
-      const msg: ConsoleMessage = {
+      consolePending.push({
         level: 'error',
         text: params.exceptionDetails?.text || params.exceptionDetails?.exception?.description || 'Unknown error',
         timestamp: params.timestamp || Date.now(),
         source: 'exception',
-      };
-      state.consoleBuffer.push(msg);
-      if (state.consoleBuffer.length > MAX_BUFFER_SIZE) {
-        state.consoleBuffer.shift();
+      });
+      if (!consoleFlushScheduled) {
+        consoleFlushScheduled = true;
+        queueMicrotask(flushConsole);
       }
     });
 
-    // Network buffer
+    // Network buffer — single responseReceived handler with Map-based method lookup
+    const requestMethodMap = new Map<string, string>();
+    client.on('Network.requestWillBeSent', (params: any) => {
+      requestMethodMap.set(params.requestId, params.request?.method || 'GET');
+      if (requestMethodMap.size > MAX_BUFFER_SIZE) {
+        const first = requestMethodMap.keys().next().value;
+        if (first) requestMethodMap.delete(first);
+      }
+    });
+
     client.on('Network.responseReceived', (params: any) => {
       const req: NetworkRequest = {
         id: params.requestId,
-        method: params.response?.requestHeaders?.[':method'] || 'GET',
+        method: requestMethodMap.get(params.requestId) ||
+          params.response?.requestHeaders?.[':method'] || 'GET',
         url: params.response?.url || '',
         status: params.response?.status || 0,
         duration: params.response?.timing
@@ -290,20 +314,7 @@ export class CDPManager {
       if (state.networkBuffer.length > MAX_BUFFER_SIZE) {
         state.networkBuffer.shift();
       }
-    });
-
-    // Network request method tracking
-    const requestMethods = new Map<string, string>();
-    client.on('Network.requestWillBeSent', (params: any) => {
-      requestMethods.set(params.requestId, params.request?.method || 'GET');
-    });
-
-    client.on('Network.responseReceived', (params: any) => {
-      // Update method from requestWillBeSent
-      const existing = state.networkBuffer.find((r) => r.id === params.requestId);
-      if (existing) {
-        existing.method = requestMethods.get(params.requestId) || existing.method;
-      }
+      requestMethodMap.delete(params.requestId);
     });
 
     // Dialog handling
@@ -596,6 +607,15 @@ export class CDPManager {
     }
 
     return this.listTabs();
+  }
+
+  storeNetworkBody(requestId: string, body: string, base64: boolean, mimeType: string, tabId?: string): void {
+    const tab = this.getTab(tabId);
+    tab.networkBodies.set(requestId, { body, base64, mimeType });
+    if (tab.networkBodies.size > MAX_NETWORK_BODIES) {
+      const firstKey = tab.networkBodies.keys().next().value;
+      if (firstKey) tab.networkBodies.delete(firstKey);
+    }
   }
 
   getConsoleBuffer(tabId?: string): ConsoleMessage[] {
