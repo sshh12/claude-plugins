@@ -11,7 +11,8 @@
   "plugins": [
     {
       "name": "brw",
-      "path": "./brw"
+      "source": "./brw",
+      "description": "Browser automation for Claude Code via Chrome DevTools Protocol"
     }
   ]
 }
