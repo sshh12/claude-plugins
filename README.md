@@ -11,13 +11,8 @@ Shrivu's random Claude Code plugins.
 
 ## About Me
 
-Hi all! Welcome to my personal blog on AI, software engineering, and cybersecurity.
-
-Chat: https://sshh.io/coffee-chat
-
-You can also find me at:
-
-- [sshh.io](https://sshh.io)
+- [Chat](https://sshh.io/coffee-chat)
+- [blog.sshh.io](https://blog.sshh.io/)
 - [github.com/sshh12](https://github.com/sshh12)
 - [x.com/ShrivuShankar](https://x.com/ShrivuShankar)
 - [linkedin.com/in/shrivushankar](https://linkedin.com/in/shrivushankar)
