@@ -225,6 +225,7 @@ export async function handleReadPage(
     maxChars?: number;
     search?: string;
     frame?: string;
+    limit?: number;
   }
 ): Promise<ApiResponse> {
   const tabId = params.tab;
@@ -282,6 +283,23 @@ export async function handleReadPage(
 
   const data = JSON.parse(result.result?.value || '{}');
   let tree = formatTree(data.tree, 0);
+
+  // Apply ref limit truncation
+  if (params.limit && params.limit > 0) {
+    const lines = tree.split('\n');
+    let refCount = 0;
+    let cutIdx = lines.length;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes('[ref_')) {
+        refCount++;
+        if (refCount > params.limit) { cutIdx = i; break; }
+      }
+    }
+    if (cutIdx < lines.length) {
+      tree = lines.slice(0, cutIdx).join('\n') +
+        `\n... (showing ${params.limit} of ${data.refCount} refs, use --search to narrow)`;
+    }
+  }
 
   // Apply max-chars truncation
   const maxChars = params.maxChars || 50000;

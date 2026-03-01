@@ -1,3 +1,4 @@
+import CDP from 'chrome-remote-interface';
 import Fastify from 'fastify';
 import { mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
@@ -11,7 +12,7 @@ import { handleNavigate } from './handlers/navigate.js';
 import { handleClick } from './handlers/click.js';
 import { handleType } from './handlers/type.js';
 import { handleKey } from './handlers/key.js';
-import { handleListTabs, handleNewTab, handleSwitchTab, handleCloseTab } from './handlers/tabs.js';
+import { handleListTabs, handleNewTab, handleSwitchTab, handleCloseTab, handleNameTab } from './handlers/tabs.js';
 import { handleWait } from './handlers/wait.js';
 import { handleReadPage } from './handlers/read-page.js';
 import { handleFormInput } from './handlers/form-input.js';
@@ -85,7 +86,7 @@ function cleanupScreenshots() {
  */
 async function setupInitialTab(cdpMgr: CDPManager, cfg: BrwConfig): Promise<void> {
   try {
-    const tabId = cdpMgr.getActiveTabId();
+    const tabId = cdpMgr.getActiveTabId() ?? undefined;
     const client = cdpMgr.getClient(tabId);
 
     // Set viewport to configured dimensions
@@ -122,15 +123,35 @@ async function relaunchChrome(): Promise<void> {
   try {
     console.error('[brw-proxy] Relaunching Chrome...');
     await cdp.closeAll();
-    chromeProcess = await launchChrome(config);
-    setupChromeExitHandler();
+
+    // Try reconnecting to existing Chrome first
+    let reconnected = false;
+    try {
+      const targets = await CDP.List({ port: config.cdpPort });
+      const pageTargets = targets.filter((t: any) => t.type === 'page');
+      if (pageTargets.length > 0) {
+        console.error(`[brw-proxy] Found existing Chrome on CDP port ${config.cdpPort} (${pageTargets.length} tabs)`);
+        chromeProcess = null;
+        reconnected = true;
+      }
+    } catch {
+      // No existing Chrome
+    }
+
+    if (!reconnected) {
+      chromeProcess = await launchChrome(config);
+      setupChromeExitHandler();
+    }
+
     const downloadDir = join(config.screenshotDir, 'downloads');
     cdp = new CDPManager(config.cdpPort, downloadDir);
     cdp.setViewport(config.windowWidth, config.windowHeight);
     await cdp.connect();
 
-    // Set viewport and clear NTP on relaunched Chrome
-    await setupInitialTab(cdp, config);
+    // Set viewport and clear NTP on fresh Chrome only
+    if (!reconnected) {
+      await setupInitialTab(cdp, config);
+    }
 
     chromeCrashed = false;
     console.error('[brw-proxy] Chrome relaunched and connected');
@@ -361,10 +382,25 @@ async function main() {
   const downloadDir = join(config.screenshotDir, 'downloads');
   mkdirSync(downloadDir, { recursive: true });
 
-  // Launch Chrome
-  console.error(`[brw-proxy] Launching Chrome on CDP port ${config.cdpPort}...`);
-  chromeProcess = await launchChrome(config);
-  setupChromeExitHandler();
+  // Try connecting to existing Chrome before launching a new one
+  let existingChrome = false;
+  try {
+    const targets = await CDP.List({ port: config.cdpPort });
+    const pageTargets = targets.filter((t: any) => t.type === 'page');
+    if (pageTargets.length > 0) {
+      console.error(`[brw-proxy] Found existing Chrome on CDP port ${config.cdpPort} (${pageTargets.length} tabs)`);
+      existingChrome = true;
+      chromeProcess = null;
+    }
+  } catch {
+    // No existing Chrome — launch one
+  }
+
+  if (!existingChrome) {
+    console.error(`[brw-proxy] Launching Chrome on CDP port ${config.cdpPort}...`);
+    chromeProcess = await launchChrome(config);
+    setupChromeExitHandler();
+  }
 
   // Connect to Chrome via CDP
   console.error('[brw-proxy] Connecting to Chrome CDP...');
@@ -373,8 +409,10 @@ async function main() {
   await cdp.connect();
   console.error('[brw-proxy] Connected to Chrome CDP');
 
-  // Set initial viewport on the default tab and clear the NTP
-  await setupInitialTab(cdp, config);
+  // Set initial viewport on the default tab and clear the NTP (only for fresh Chrome)
+  if (!existingChrome) {
+    await setupInitialTab(cdp, config);
+  }
 
   // Create Fastify server
   const server = Fastify({ logger: false });
@@ -466,6 +504,11 @@ async function main() {
   server.post(
     '/api/tabs/close',
     readHandler(async (body) => handleCloseTab(cdp, body))
+  );
+
+  server.post(
+    '/api/tabs/name',
+    readHandler(async (body) => handleNameTab(cdp, body))
   );
 
   // --- Phase 2: Page reading and interaction ---

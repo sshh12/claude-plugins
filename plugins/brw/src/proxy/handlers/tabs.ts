@@ -46,6 +46,17 @@ export async function handleSwitchTab(
   return { ok: true, screenshot: screenshotResult.screenshot, page, tabId: params.tabId };
 }
 
+export async function handleNameTab(
+  cdp: CDPManager,
+  params: { alias: string; tabId?: string }
+): Promise<ApiResponse> {
+  if (!params.alias) {
+    return { ok: false, error: 'alias is required', code: 'INVALID_ARGUMENT' };
+  }
+  const result = cdp.nameTab(params.alias, params.tabId);
+  return { ok: true, alias: result.alias, tabId: result.tabId };
+}
+
 export async function handleCloseTab(
   cdp: CDPManager,
   params: { tabId: string }

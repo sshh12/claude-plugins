@@ -65,6 +65,8 @@ export class CDPManager {
   private viewportHeight: number = 0;
   private connectRetries = 0;
   private maxConnectRetries = 30; // 30 * 1s = 30s max wait for Chrome
+  private lastActiveUrl = '';
+  private tabAliases = new Map<string, string>(); // alias → tabId
 
   constructor(cdpPort: number, downloadDir?: string) {
     this.cdpPort = cdpPort;
@@ -77,6 +79,38 @@ export class CDPManager {
   setViewport(width: number, height: number): void {
     this.viewportWidth = width;
     this.viewportHeight = height;
+  }
+
+  private resolveTabId(idOrAlias: string): string {
+    const resolved = this.tabAliases.get(idOrAlias);
+    return resolved || idOrAlias;
+  }
+
+  nameTab(alias: string, tabId?: string): { alias: string; tabId: string } {
+    const id = tabId || this.activeTabId;
+    if (!id) throw new Error('No active tab');
+    if (!this.tabs.has(id)) throw new Error(`Tab ${id} not found`);
+    // Clear any prior alias for same tab
+    for (const [a, tid] of this.tabAliases) {
+      if (tid === id) { this.tabAliases.delete(a); break; }
+    }
+    this.tabAliases.set(alias, id);
+    return { alias, tabId: id };
+  }
+
+  removeTabAlias(alias: string): boolean {
+    return this.tabAliases.delete(alias);
+  }
+
+  getTabAliases(): Map<string, string> {
+    return this.tabAliases;
+  }
+
+  getAliasForTab(tabId: string): string | undefined {
+    for (const [alias, tid] of this.tabAliases) {
+      if (tid === tabId) return alias;
+    }
+    return undefined;
   }
 
   async connect(): Promise<void> {
@@ -92,6 +126,8 @@ export class CDPManager {
           }
           if (!this.activeTabId && this.tabs.size > 0) {
             this.activeTabId = this.tabs.keys().next().value!;
+            const tab = this.tabs.get(this.activeTabId!);
+            if (tab) this.lastActiveUrl = tab.url;
           }
           return;
         }
@@ -355,12 +391,17 @@ export class CDPManager {
       throw new Error(`Tab ${tabId} not found`);
     }
     this.activeTabId = tabId;
+    this.lastActiveUrl = this.tabs.get(tabId)!.url;
   }
 
   getTab(tabId?: string): TabState {
     const id = tabId || this.activeTabId;
     if (!id) throw new Error('No active tab');
-    const tab = this.tabs.get(id);
+    let tab = this.tabs.get(id);
+    if (!tab) {
+      const resolvedId = this.tabAliases.get(id);
+      if (resolvedId) tab = this.tabs.get(resolvedId);
+    }
     if (!tab) throw new Error(`Tab ${id} not found`);
     return tab;
   }
@@ -428,15 +469,30 @@ export class CDPManager {
       }
     }
 
+    // Clean up aliases pointing to dead tabs
+    for (const [alias, tid] of this.tabAliases) {
+      if (!this.tabs.has(tid)) this.tabAliases.delete(alias);
+    }
+
     // Reset activeTabId if it's stale (target was destroyed/recreated)
     if (this.activeTabId && !this.tabs.has(this.activeTabId)) {
-      this.activeTabId = this.tabs.size > 0 ? this.tabs.keys().next().value! : null;
+      let replacement: string | null = null;
+      if (this.lastActiveUrl && this.lastActiveUrl !== 'about:blank') {
+        for (const target of pageTargets) {
+          if (target.url === this.lastActiveUrl) {
+            replacement = target.id;
+            break;
+          }
+        }
+      }
+      this.activeTabId = replacement || (this.tabs.size > 0 ? this.tabs.keys().next().value! : null);
     }
 
     return pageTargets.map((t: any) => ({
       id: t.id,
       url: t.url,
       title: t.title,
+      alias: this.getAliasForTab(t.id),
     }));
   }
 
@@ -447,32 +503,42 @@ export class CDPManager {
     });
     const state = await this.attachToTarget(target.id);
     this.activeTabId = target.id;
+    this.lastActiveUrl = state.url || url || 'about:blank';
     return { tabId: target.id, url: state.url || url || 'about:blank' };
   }
 
   async activateTab(tabId: string): Promise<void> {
-    if (!this.tabs.has(tabId)) {
+    const resolved = this.resolveTabId(tabId);
+    if (!this.tabs.has(resolved)) {
       // Try to attach
-      await this.attachToTarget(tabId);
+      await this.attachToTarget(resolved);
     }
-    await CDP.Activate({ port: this.cdpPort, id: tabId });
-    this.activeTabId = tabId;
+    await CDP.Activate({ port: this.cdpPort, id: resolved });
+    this.activeTabId = resolved;
+    const tab = this.tabs.get(resolved);
+    if (tab) this.lastActiveUrl = tab.url;
   }
 
   async closeTab(tabId: string): Promise<TabInfo[]> {
-    const tab = this.tabs.get(tabId);
+    const resolved = this.resolveTabId(tabId);
+    const tab = this.tabs.get(resolved);
     if (tab) {
       try {
         await tab.client.close();
       } catch {
         // ignore
       }
-      this.tabs.delete(tabId);
+      this.tabs.delete(resolved);
     }
-    await CDP.Close({ port: this.cdpPort, id: tabId });
+    await CDP.Close({ port: this.cdpPort, id: resolved });
+
+    // Clean up aliases pointing to closed tab
+    for (const [alias, tid] of this.tabAliases) {
+      if (tid === resolved) { this.tabAliases.delete(alias); break; }
+    }
 
     // If we closed the active tab, switch to another
-    if (this.activeTabId === tabId) {
+    if (this.activeTabId === resolved) {
       this.activeTabId = this.tabs.size > 0 ? this.tabs.keys().next().value! : null;
     }
 

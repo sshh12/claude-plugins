@@ -6,6 +6,9 @@ import { handleType } from './type.js';
 import { handleKey } from './key.js';
 import { handleNavigate } from './navigate.js';
 import { handleListTabs, handleNewTab, handleSwitchTab } from './tabs.js';
+import { handleReadPage } from './read-page.js';
+import { handleFormInput } from './form-input.js';
+import { handleWaitFor } from './wait-for.js';
 
 interface QuickCommand {
   cmd: string;
@@ -55,6 +58,7 @@ function isValidCommand(cmd: string): boolean {
   return [
     'C', 'RC', 'DC', 'TC', 'H', 'T', 'K', 'S', 'D', 'Z',
     'N', 'J', 'W', 'ST', 'NT', 'LT',
+    'CR', 'FR', 'R', 'WF',
   ].includes(cmd);
 }
 
@@ -262,6 +266,80 @@ export async function handleQuick(
         case 'LT': {
           const tabsResult = await handleListTabs(cdp);
           results.push({ command: 'LT', tabs: tabsResult.tabs, activeTab: tabsResult.activeTab });
+          break;
+        }
+
+        case 'CR': {
+          if (!args) {
+            return { ok: false, error: 'CR requires ref_id argument', code: 'INVALID_ARGUMENT' };
+          }
+          await handleClick(cdp, config, {
+            tab: tabId,
+            ref: args.trim(),
+            noScreenshot: true,
+          });
+          break;
+        }
+
+        case 'FR': {
+          if (!args) {
+            return { ok: false, error: 'FR requires ref_id and value arguments', code: 'INVALID_ARGUMENT' };
+          }
+          const spaceIdx = args.indexOf(' ');
+          if (spaceIdx === -1) {
+            return { ok: false, error: 'FR requires ref_id and value (FR ref_id value)', code: 'INVALID_ARGUMENT' };
+          }
+          const frRef = args.substring(0, spaceIdx).trim();
+          const frValue = args.substring(spaceIdx + 1).trim();
+          await handleFormInput(cdp, config, {
+            tab: tabId,
+            ref: frRef,
+            value: frValue,
+            noScreenshot: true,
+          });
+          break;
+        }
+
+        case 'R': {
+          const rParams: Record<string, unknown> = { tab: tabId };
+          // Parse --search, --filter, --scope, --limit flags
+          const rArgs = args;
+          const searchMatch = rArgs.match(/--search\s+(\S+)/);
+          if (searchMatch) rParams.search = searchMatch[1];
+          const filterMatch = rArgs.match(/--filter\s+(\S+)/);
+          if (filterMatch) rParams.filter = filterMatch[1];
+          const scopeMatch = rArgs.match(/--scope\s+(\S+)/);
+          if (scopeMatch) rParams.scope = scopeMatch[1];
+          const limitMatch = rArgs.match(/--limit\s+(\d+)/);
+          if (limitMatch) rParams.limit = parseInt(limitMatch[1], 10);
+          const readResult = await handleReadPage(cdp, rParams);
+          results.push({ command: 'R', tree: readResult.tree, refCount: readResult.refCount });
+          break;
+        }
+
+        case 'WF': {
+          if (!args) {
+            return { ok: false, error: 'WF requires a condition flag (--selector, --text, --js)', code: 'INVALID_ARGUMENT' };
+          }
+          const wfParams: Record<string, unknown> = { tab: tabId, noScreenshot: true };
+          const selectorMatch = args.match(/--selector\s+(\S+)/);
+          if (selectorMatch) wfParams.selector = selectorMatch[1];
+          const textMatch = args.match(/--text\s+"([^"]+)"/);
+          if (textMatch) wfParams.text = textMatch[1];
+          else {
+            const textMatch2 = args.match(/--text\s+(\S+)/);
+            if (textMatch2) wfParams.text = textMatch2[1];
+          }
+          const jsMatch = args.match(/--js\s+"([^"]+)"/);
+          if (jsMatch) wfParams.js = jsMatch[1];
+          else {
+            const jsMatch2 = args.match(/--js\s+(\S+)/);
+            if (jsMatch2) wfParams.js = jsMatch2[1];
+          }
+          const timeoutMatch = args.match(/--timeout\s+(\d+)/);
+          if (timeoutMatch) wfParams.timeout = parseInt(timeoutMatch[1], 10);
+          const wfResult = await handleWaitFor(cdp, config, wfParams as any);
+          results.push({ command: 'WF', matched: wfResult.ok });
           break;
         }
 

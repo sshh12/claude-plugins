@@ -9,7 +9,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.4.0')
+  .version('0.5.0')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--text', 'Output as plain text instead of JSON')
@@ -306,6 +306,15 @@ program
     await run('POST', '/api/tabs/close', { tabId: id });
   });
 
+// ---- name-tab ----
+
+program
+  .command('name-tab <alias> [tabId]')
+  .description('Name the current or specified tab with an alias')
+  .action(async (alias, tabId) => {
+    await run('POST', '/api/tabs/name', { alias, tabId });
+  });
+
 // ---- wait ----
 
 program
@@ -356,6 +365,7 @@ program
   .option('--depth <n>', 'Max tree depth')
   .option('--max-chars <n>', 'Truncate output')
   .option('--frame <target>', 'Target iframe by index, name, or URL')
+  .option('--limit <n>', 'Max number of ref elements to include')
   .action(async (opts) => {
     await run('POST', '/api/read-page', {
       filter: opts.filter,
@@ -365,6 +375,7 @@ program
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
       maxChars: opts.maxChars ? parseInt(opts.maxChars, 10) : undefined,
       frame: opts.frame,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
     });
   });
 

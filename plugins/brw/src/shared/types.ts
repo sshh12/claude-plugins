@@ -48,6 +48,7 @@ export interface TabInfo {
   id: string;
   url: string;
   title: string;
+  alias?: string;
 }
 
 // ---- Error Codes ----
