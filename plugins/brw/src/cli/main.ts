@@ -176,7 +176,7 @@ program
 program
   .command('navigate <url>')
   .description('Navigate to URL, or "back"/"forward"')
-  .option('--wait <strategy>', 'Wait strategy: none, dom, network', 'dom')
+  .option('--wait <strategy>', 'Wait strategy: none, dom, network, render (full SPA render)', 'dom')
   .option('--no-screenshot', 'Skip auto-screenshot')
   .action(async (url, opts) => {
     await run('POST', '/api/navigate', {
@@ -884,6 +884,31 @@ program.on('command:*', () => {
   process.stderr.write(`Unknown command: ${program.args.join(' ')}\nRun "brw --help" for usage.\n`);
   process.exit(ExitCode.USAGE_ERROR);
 });
+
+// Auto-create /tmp/brw symlink pointing to this script
+(function autoSetupSymlink() {
+  const symlinkPath = '/tmp/brw';
+  const targetPath = __filename; // brw.js (has shebang, is executable)
+  try {
+    const { existsSync, readlinkSync, unlinkSync, symlinkSync } = require('fs');
+    let needsCreate = true;
+    if (existsSync(symlinkPath)) {
+      try {
+        const current = readlinkSync(symlinkPath);
+        if (current === targetPath) needsCreate = false;
+        else unlinkSync(symlinkPath);
+      } catch {
+        // Not a symlink or broken — remove and recreate
+        try { unlinkSync(symlinkPath); } catch { /* ignore */ }
+      }
+    }
+    if (needsCreate) {
+      symlinkSync(targetPath, symlinkPath);
+    }
+  } catch {
+    // Best-effort — don't fail the CLI if symlink creation fails
+  }
+})();
 
 program.parseAsync(process.argv).catch((err) => {
   process.stderr.write(`Error: ${err.message}\n`);

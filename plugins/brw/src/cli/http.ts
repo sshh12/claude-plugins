@@ -81,6 +81,7 @@ export async function checkProxyHealth(port: number, timeout: number = 3): Promi
 
 /**
  * Ensure the proxy is running. If not, auto-start it.
+ * startProxy() now polls /health internally, so no separate wait loop needed.
  */
 export async function ensureProxy(port: number, timeout: number, debug: boolean): Promise<void> {
   // Quick health check
@@ -91,27 +92,13 @@ export async function ensureProxy(port: number, timeout: number, debug: boolean)
     process.stderr.write('[brw] Proxy not running, auto-starting...\n');
   }
 
-  // Auto-start proxy
+  // Auto-start proxy (blocks until healthy or throws with error details)
   const { startProxy } = await import('./proxy-launcher.js');
   await startProxy(port, undefined, undefined, debug);
 
-  // Wait for proxy to be ready (up to 15 seconds)
-  const maxWait = 15000;
-  const interval = 500;
-  const start = Date.now();
-
-  while (Date.now() - start < maxWait) {
-    const ready = await checkProxyHealth(port, 2);
-    if (ready) {
-      if (debug) {
-        process.stderr.write('[brw] Proxy is ready.\n');
-      }
-      return;
-    }
-    await new Promise((r) => setTimeout(r, interval));
+  if (debug) {
+    process.stderr.write('[brw] Proxy is ready.\n');
   }
-
-  throw new Error(`Proxy failed to start within ${maxWait / 1000}s`);
 }
 
 /**

@@ -112,5 +112,102 @@ async function waitForPage(client: any, strategy: string): Promise<void> {
       // Safety timeout
       setTimeout(resolve, 15000);
     });
+    return;
+  }
+
+  if (strategy === 'render') {
+    // Full render wait for SPAs:
+    // (a) readyState === 'complete'
+    // (b) network idle 500ms
+    // (c) LayoutCount stable for 500ms
+    // (d) double-rAF for paint completion
+    const SAFETY_TIMEOUT = 15000;
+    const start = Date.now();
+    const elapsed = () => Date.now() - start;
+
+    // (a) Wait for readyState === 'complete'
+    try {
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(resolve, SAFETY_TIMEOUT);
+        const poll = async () => {
+          try {
+            const r = await client.Runtime.evaluate({
+              expression: 'document.readyState',
+              returnByValue: true,
+            });
+            if (r.result?.value === 'complete') {
+              clearTimeout(timeout);
+              resolve();
+              return;
+            }
+          } catch { /* ignore */ }
+          if (elapsed() < SAFETY_TIMEOUT) setTimeout(poll, 100);
+          else resolve();
+        };
+        poll();
+      });
+    } catch { /* best effort */ }
+
+    // (b) Network idle 500ms
+    if (elapsed() < SAFETY_TIMEOUT) {
+      await new Promise<void>((resolve) => {
+        const remaining = SAFETY_TIMEOUT - elapsed();
+        let timer: ReturnType<typeof setTimeout>;
+        const safetyTimer = setTimeout(resolve, remaining);
+        const resetTimer = () => {
+          clearTimeout(timer);
+          timer = setTimeout(() => { clearTimeout(safetyTimer); resolve(); }, 500);
+        };
+        resetTimer();
+        client.on('Network.requestWillBeSent', resetTimer);
+      });
+    }
+
+    // (c) LayoutCount stable for 500ms via Performance.getMetrics
+    if (elapsed() < SAFETY_TIMEOUT) {
+      try {
+        await client.Performance.enable();
+        await new Promise<void>((resolve) => {
+          const remaining = SAFETY_TIMEOUT - elapsed();
+          const safetyTimer = setTimeout(resolve, remaining);
+          let lastLayoutCount = -1;
+          let stableTimer: ReturnType<typeof setTimeout>;
+
+          const checkLayout = async () => {
+            try {
+              const { metrics } = await client.Performance.getMetrics();
+              const layoutMetric = metrics.find((m: any) => m.name === 'LayoutCount');
+              const currentCount = layoutMetric?.value ?? 0;
+
+              if (currentCount === lastLayoutCount) {
+                // Already stable from previous check — stableTimer will resolve
+                return;
+              }
+              lastLayoutCount = currentCount;
+              clearTimeout(stableTimer);
+              stableTimer = setTimeout(() => { clearTimeout(safetyTimer); resolve(); }, 500);
+            } catch {
+              clearTimeout(safetyTimer);
+              resolve();
+              return;
+            }
+            if (elapsed() < SAFETY_TIMEOUT) setTimeout(checkLayout, 200);
+          };
+          checkLayout();
+        });
+        await client.Performance.disable();
+      } catch { /* Performance domain may not be available */ }
+    }
+
+    // (d) Double-rAF for paint completion
+    if (elapsed() < SAFETY_TIMEOUT) {
+      try {
+        await client.Runtime.evaluate({
+          expression: 'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
+          awaitPromise: true,
+          timeout: Math.min(2000, SAFETY_TIMEOUT - elapsed()),
+        });
+      } catch { /* best effort */ }
+    }
   }
 }

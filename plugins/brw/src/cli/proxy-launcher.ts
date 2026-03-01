@@ -1,10 +1,41 @@
 import { spawn } from 'child_process';
 import { dirname, join } from 'path';
+import http from 'http';
 import { readPidFile, isProcessRunning } from '../proxy/chrome.js';
 import type { ApiResponse } from '../shared/types.js';
 
 /**
+ * Poll the proxy health endpoint until it responds or timeout.
+ */
+function pollHealth(port: number, timeoutMs: number, intervalMs: number): Promise<boolean> {
+  const start = Date.now();
+  return new Promise((resolve) => {
+    const check = () => {
+      if (Date.now() - start > timeoutMs) {
+        resolve(false);
+        return;
+      }
+      const req = http.get(`http://127.0.0.1:${port}/health`, { timeout: 1000 }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.ok) { resolve(true); return; }
+          } catch { /* not ready */ }
+          setTimeout(check, intervalMs);
+        });
+      });
+      req.on('error', () => setTimeout(check, intervalMs));
+      req.on('timeout', () => { req.destroy(); setTimeout(check, intervalMs); });
+    };
+    check();
+  });
+}
+
+/**
  * Start the proxy server as a detached background process.
+ * Polls /health to confirm the server is ready before returning.
  */
 export async function startProxy(
   port: number,
@@ -34,14 +65,12 @@ export async function startProxy(
     process.stderr.write(`[brw] Port: ${port}\n`);
   }
 
-  // Spawn proxy as a detached process
+  // Spawn proxy as a detached process, capturing stderr for error reporting
   const child = spawn('node', [proxyScript], {
     env,
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'pipe'],
     detached: true,
   });
-
-  child.unref();
 
   const pid = child.pid;
   if (!pid) {
@@ -52,5 +81,47 @@ export async function startProxy(
     process.stderr.write(`[brw] Proxy spawned with PID ${pid}\n`);
   }
 
-  return { ok: true, pid, port } as ApiResponse;
+  // Collect stderr in case the process dies during startup
+  let stderrBuf = '';
+  child.stderr!.on('data', (chunk: Buffer) => {
+    stderrBuf += chunk.toString();
+    if (debug) {
+      process.stderr.write(chunk);
+    }
+  });
+
+  // Watch for early exit
+  let exited = false;
+  let exitCode: number | null = null;
+  child.on('exit', (code) => {
+    exited = true;
+    exitCode = code;
+  });
+
+  // Poll /health every 200ms for up to 10s
+  const healthy = await pollHealth(port, 10000, 200);
+
+  if (healthy) {
+    // Server is up — detach stderr and unref
+    child.stderr!.destroy();
+    child.unref();
+    return { ok: true, pid, port } as ApiResponse;
+  }
+
+  // Server failed to start
+  if (exited) {
+    const detail = stderrBuf.trim();
+    throw new Error(
+      `Proxy exited with code ${exitCode} during startup` +
+      (detail ? `:\n${detail}` : '')
+    );
+  }
+
+  // Still running but not healthy — kill it
+  try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+  const detail = stderrBuf.trim();
+  throw new Error(
+    `Proxy failed to become healthy within 10s` +
+    (detail ? `:\n${detail}` : '')
+  );
 }

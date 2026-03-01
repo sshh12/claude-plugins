@@ -79,6 +79,30 @@ function cleanupScreenshots() {
 }
 
 /**
+ * Set initial viewport size and clear the New Tab Page on the default tab.
+ */
+async function setupInitialTab(cdpMgr: CDPManager, cfg: BrwConfig): Promise<void> {
+  try {
+    const tabId = cdpMgr.getActiveTabId();
+    const client = cdpMgr.getClient(tabId);
+
+    // Set viewport to configured dimensions
+    await client.Emulation.setDeviceMetricsOverride({
+      width: cfg.windowWidth,
+      height: cfg.windowHeight,
+      deviceScaleFactor: 0,
+      mobile: false,
+    });
+
+    // Navigate away from Chrome's New Tab Page to a blank page
+    await client.Page.navigate({ url: 'about:blank' });
+    await client.Page.loadEventFired();
+  } catch (err) {
+    console.error('[brw-proxy] Warning: failed to set initial viewport/blank page:', err);
+  }
+}
+
+/**
  * Relaunch Chrome after a crash. Called on next CLI command.
  */
 async function relaunchChrome(): Promise<void> {
@@ -98,6 +122,10 @@ async function relaunchChrome(): Promise<void> {
     const downloadDir = join(config.screenshotDir, 'downloads');
     cdp = new CDPManager(config.cdpPort, downloadDir);
     await cdp.connect();
+
+    // Set viewport and clear NTP on relaunched Chrome
+    await setupInitialTab(cdp, config);
+
     chromeCrashed = false;
     console.error('[brw-proxy] Chrome relaunched and connected');
   } catch (err) {
@@ -336,6 +364,9 @@ async function main() {
   await cdp.connect();
   console.error('[brw-proxy] Connected to Chrome CDP');
 
+  // Set initial viewport on the default tab and clear the NTP
+  await setupInitialTab(cdp, config);
+
   // Create Fastify server
   const server = Fastify({ logger: false });
 
@@ -543,7 +574,7 @@ async function main() {
   );
 
   // Start the server
-  writePidFile(process.pid, config.proxyPort);
+  writePidFile(process.pid, config.proxyPort, chromeProcess?.pid);
   resetIdleTimer();
 
   // Periodic screenshot cleanup (every 10 minutes)

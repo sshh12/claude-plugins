@@ -67,14 +67,14 @@ Read-only commands: read-page, get-text, js, tabs, new-tab, close-tab, console, 
 ### `brw navigate`
 
 ```bash
-brw navigate <url> [--wait dom|network|none] [--tab ID]
+brw navigate <url> [--wait dom|network|render|none] [--tab ID]
 brw navigate back [--tab ID]
 brw navigate forward [--tab ID]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--wait` | `dom` | When to resolve: `dom` (DOMContentLoaded), `network` (network idle), `none` (immediately) |
+| `--wait` | `dom` | When to resolve: `dom` (DOMContentLoaded), `network` (network idle 500ms), `render` (full SPA render: readyState complete + network idle + layout stable + paint), `none` (immediately) |
 
 - Auto-prepends `https://` if no protocol given
 - `back` and `forward` use browser history

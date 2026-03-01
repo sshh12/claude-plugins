@@ -1,5 +1,5 @@
 import { spawn, execSync, ChildProcess } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readlinkSync } from 'fs';
 import { join } from 'path';
 import { homedir, platform } from 'os';
 import { createConnection } from 'net';
@@ -96,6 +96,72 @@ function getPortOwnerPid(port: number): number | null {
   }
 }
 
+/**
+ * Check for a stale SingletonLock in the Chrome data directory.
+ * Chrome creates this as a symlink with target "hostname-PID".
+ * If the PID is dead, delete the stale lock. If alive, throw with PID info.
+ */
+function checkSingletonLock(chromeDataDir: string): void {
+  const lockPath = join(chromeDataDir, 'SingletonLock');
+  if (!existsSync(lockPath)) return;
+
+  try {
+    const target = readlinkSync(lockPath);
+    // Format: "hostname-PID"
+    const dashIdx = target.lastIndexOf('-');
+    if (dashIdx === -1) return;
+    const pid = parseInt(target.slice(dashIdx + 1), 10);
+    if (isNaN(pid)) return;
+
+    if (isProcessRunning(pid)) {
+      throw new Error(
+        `Chrome data directory is locked by a running process (PID ${pid}). ` +
+        `Kill it with "kill ${pid}" or use a different data dir with BRW_DATA_DIR.`
+      );
+    }
+
+    // PID is dead — stale lock, remove it
+    console.error(`[brw-proxy] Removing stale SingletonLock (dead PID ${pid})`);
+    unlinkSync(lockPath);
+  } catch (err: any) {
+    // Re-throw our own errors, ignore fs errors (e.g. not a symlink)
+    if (err.message?.includes('Chrome data directory is locked')) throw err;
+  }
+}
+
+/**
+ * Clean up an orphaned Chrome process from a previous proxy run.
+ * If the CDP port is occupied and our proxy PID is dead but our Chrome PID is alive, kill Chrome.
+ */
+export async function cleanupOrphanedChrome(config: BrwConfig): Promise<void> {
+  const pidData = readPidFile();
+  if (!pidData || !pidData.chromePid) return;
+
+  // If proxy is still alive, no orphan
+  if (isProcessRunning(pidData.pid)) return;
+
+  // Proxy is dead — check if Chrome is still alive
+  if (isProcessRunning(pidData.chromePid)) {
+    const portCheck = await checkPortInUse(config.cdpPort);
+    if (portCheck.inUse) {
+      console.error(`[brw-proxy] Killing orphaned Chrome (PID ${pidData.chromePid}) from dead proxy (PID ${pidData.pid})`);
+      try {
+        process.kill(pidData.chromePid, 'SIGTERM');
+        // Give it a moment, then force kill
+        await new Promise((r) => setTimeout(r, 1000));
+        if (isProcessRunning(pidData.chromePid)) {
+          process.kill(pidData.chromePid, 'SIGKILL');
+        }
+      } catch {
+        // ignore — process may have already exited
+      }
+    }
+  }
+
+  // Clean up stale PID file
+  removePidFile();
+}
+
 export async function launchChrome(config: BrwConfig): Promise<ChildProcess> {
   const chromePath = config.chromePath || detectChromePath();
   if (!chromePath) {
@@ -107,6 +173,9 @@ export async function launchChrome(config: BrwConfig): Promise<ChildProcess> {
   if (!existsSync(chromePath)) {
     throw new Error(`Chrome binary not found at: ${chromePath}`);
   }
+
+  // Clean up orphaned Chrome from a previous proxy crash
+  await cleanupOrphanedChrome(config);
 
   // Check if CDP port is already in use
   const portCheck = await checkPortInUse(config.cdpPort);
@@ -124,6 +193,9 @@ export async function launchChrome(config: BrwConfig): Promise<ChildProcess> {
   }
 
   mkdirSync(config.chromeDataDir, { recursive: true });
+
+  // Check for stale SingletonLock
+  checkSingletonLock(config.chromeDataDir);
 
   const args = [
     `--remote-debugging-port=${config.cdpPort}`,
@@ -148,12 +220,12 @@ export async function launchChrome(config: BrwConfig): Promise<ChildProcess> {
   return child;
 }
 
-export function writePidFile(pid: number, port: number): void {
+export function writePidFile(pid: number, port: number, chromePid?: number): void {
   mkdirSync(PID_DIR, { recursive: true });
-  writeFileSync(PID_FILE, JSON.stringify({ pid, port, startedAt: Date.now() }));
+  writeFileSync(PID_FILE, JSON.stringify({ pid, port, chromePid, startedAt: Date.now() }));
 }
 
-export function readPidFile(): { pid: number; port: number; startedAt: number } | null {
+export function readPidFile(): { pid: number; port: number; chromePid?: number; startedAt: number } | null {
   try {
     if (!existsSync(PID_FILE)) return null;
     const data = JSON.parse(readFileSync(PID_FILE, 'utf-8'));
