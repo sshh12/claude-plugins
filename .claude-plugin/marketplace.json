@@ -8,5 +8,10 @@
     "version": "0.1.0",
     "pluginRoot": "./plugins"
   },
-  "plugins": []
+  "plugins": [
+    {
+      "name": "brw",
+      "path": "./brw"
+    }
+  ]
 }

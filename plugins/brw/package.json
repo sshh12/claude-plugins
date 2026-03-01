@@ -1,0 +1,23 @@
+{
+  "name": "brw",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser automation plugin for Claude Code via Chrome DevTools Protocol",
+  "scripts": {
+    "build": "bash build.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.34.0",
+    "commander": "^14.0.3",
+    "fastify": "^5.7.4",
+    "gifenc": "^1.0.3",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/pngjs": "^6.0.5",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
+  }
+}

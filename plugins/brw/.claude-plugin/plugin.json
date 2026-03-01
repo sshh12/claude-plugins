@@ -1,0 +1,23 @@
+{
+  "name": "brw",
+  "version": "0.1.0",
+  "description": "Browser automation for Claude Code via Chrome DevTools Protocol",
+  "author": {
+    "name": "shrivu"
+  },
+  "repository": "https://github.com/shrivu/claude-plugins",
+  "license": "MIT",
+  "keywords": ["browser", "automation", "chrome", "cdp", "web"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e 'const v=parseInt(process.versions.node);if(v<18){console.error(\"brw requires Node.js 18+, found \"+process.version);process.exit(1)}' 2>/dev/null || echo 'Node.js 18+ not found. brw requires Node.js 18+ to run.'"
+          }
+        ]
+      }
+    ]
+  }
+}
