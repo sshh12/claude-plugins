@@ -19,5 +19,5 @@ You can also find me at:
 
 - [sshh.io](https://sshh.io)
 - [github.com/sshh12](https://github.com/sshh12)
-- [twitter.com/ShrivuShankar](https://twitter.com/ShrivuShankar)
+- [x.com/ShrivuShankar](https://x.com/ShrivuShankar)
 - [linkedin.com/in/shrivushankar](https://linkedin.com/in/shrivushankar)
