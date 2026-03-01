@@ -2,6 +2,8 @@ import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
 import { checkAllowedUrl } from '../../shared/config.js';
 import { handleScreenshot } from './screenshot.js';
+import { waitForPage } from './navigate.js';
+import { getGlobalLogger } from '../logger.js';
 
 export async function handleListTabs(cdp: CDPManager): Promise<ApiResponse> {
   const tabs = await cdp.listTabs();
@@ -12,8 +14,9 @@ export async function handleListTabs(cdp: CDPManager): Promise<ApiResponse> {
 export async function handleNewTab(
   cdp: CDPManager,
   config: BrwConfig,
-  params: { url?: string }
+  params: { url?: string; wait?: string; noScreenshot?: boolean }
 ): Promise<ApiResponse> {
+  const logger = getGlobalLogger();
   let url = params.url;
 
   if (url) {
@@ -32,6 +35,26 @@ export async function handleNewTab(
   }
 
   const result = await cdp.createTab(url);
+  logger.info('new-tab', { tabId: result.tabId, url: url || 'about:blank' });
+
+  // If --wait is specified and a URL was provided, wait for the page to load
+  if (params.wait && url) {
+    const client = cdp.getClient(result.tabId);
+    await waitForPage(client, params.wait);
+    const page = await cdp.getPageInfo(result.tabId);
+    const screenshotResult = await handleScreenshot(cdp, config, {
+      tab: result.tabId,
+      noScreenshot: params.noScreenshot,
+    });
+    return {
+      ok: true,
+      tabId: result.tabId,
+      url: result.url,
+      screenshot: screenshotResult.screenshot,
+      page,
+    };
+  }
+
   return { ok: true, tabId: result.tabId, url: result.url };
 }
 
@@ -40,6 +63,8 @@ export async function handleSwitchTab(
   config: BrwConfig,
   params: { tabId: string; noScreenshot?: boolean }
 ): Promise<ApiResponse> {
+  const logger = getGlobalLogger();
+  logger.info('switch-tab', { tabId: params.tabId });
   await cdp.activateTab(params.tabId);
   const page = await cdp.getPageInfo(params.tabId);
   const screenshotResult = await handleScreenshot(cdp, config, { tab: params.tabId, noScreenshot: params.noScreenshot });
@@ -61,6 +86,8 @@ export async function handleCloseTab(
   cdp: CDPManager,
   params: { tabId: string }
 ): Promise<ApiResponse> {
+  const logger = getGlobalLogger();
+  logger.info('close-tab', { tabId: params.tabId });
   const tabs = await cdp.closeTab(params.tabId);
   return { ok: true, tabs };
 }

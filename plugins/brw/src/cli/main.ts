@@ -9,7 +9,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.5.2')
+  .version('0.5.3')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--text', 'Output as plain text instead of JSON')
@@ -46,7 +46,7 @@ async function run(
 
   // Auto-extend HTTP timeout when the handler has its own timeout
   if (typeof body.timeout === 'number' && body.timeout > 0) {
-    globals.timeout = Math.max(globals.timeout, body.timeout + 10);
+    globals.timeout = Math.max(globals.timeout, body.timeout + 20);
   }
 
   try {
@@ -296,8 +296,14 @@ program
   .command('new-tab [url]')
   .allowUnknownOption()
   .description('Open a URL in a new tab')
-  .action(async (url) => {
-    await run('POST', '/api/tabs/new', { url });
+  .option('--wait <strategy>', 'Wait strategy: none, dom, network, render')
+  .option('--no-screenshot', 'Skip auto-screenshot (with --wait)')
+  .action(async (url, opts) => {
+    await run('POST', '/api/tabs/new', {
+      url,
+      wait: opts.wait,
+      noScreenshot: opts.screenshot === false,
+    });
   });
 
 // ---- switch-tab ----
@@ -339,6 +345,7 @@ program
 program
   .command('wait')
   .allowUnknownOption()
+  .allowExcessArguments()
   .description('Wait for a duration')
   .option('--duration <seconds>', 'Seconds to wait', '2')
   .option('--no-screenshot', 'Skip auto-screenshot')
@@ -354,6 +361,7 @@ program
 program
   .command('wait-for')
   .allowUnknownOption()
+  .allowExcessArguments()
   .description('Wait for a condition')
   .option('--selector <css>', 'Wait for CSS selector to match')
   .option('--text <text>', 'Wait for text to appear on page')

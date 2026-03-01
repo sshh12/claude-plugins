@@ -1,5 +1,6 @@
 import CDP from 'chrome-remote-interface';
 import type { TabInfo, ConsoleMessage, NetworkRequest } from '../shared/types.js';
+import { getGlobalLogger } from './logger.js';
 
 interface CDPClient {
   Page: any;
@@ -130,12 +131,16 @@ export class CDPManager {
             const tab = this.tabs.get(this.activeTabId!);
             if (tab) this.lastActiveUrl = tab.url;
           }
+          const logger = getGlobalLogger();
+          logger.info(`CDP connected to ${pageTargets.length} tab(s)`);
           return;
         }
       } catch {
         // Chrome not ready yet
       }
       this.connectRetries++;
+      const logger = getGlobalLogger();
+      logger.info(`CDP connect attempt ${this.connectRetries}/${this.maxConnectRetries}...`);
       await new Promise((r) => setTimeout(r, 1000));
     }
     throw new Error(`Failed to connect to Chrome CDP on port ${this.cdpPort} after ${this.maxConnectRetries}s`);
@@ -362,6 +367,8 @@ export class CDPManager {
           deviceScaleFactor: 1,
           mobile: false,
         });
+        const logger = getGlobalLogger();
+        logger.info(`Viewport set ${this.viewportWidth}x${this.viewportHeight} for tab ${targetId}`);
       } catch {
         // ignore — older Chrome versions may not support this
       }
@@ -488,6 +495,9 @@ export class CDPManager {
       }
       this.activeTabId = replacement || (this.tabs.size > 0 ? this.tabs.keys().next().value! : null);
     }
+
+    const logger = getGlobalLogger();
+    logger.info(`listTabs: ${pageTargets.length} tabs, active=${this.activeTabId}`);
 
     return pageTargets.map((t: any) => ({
       id: t.id,

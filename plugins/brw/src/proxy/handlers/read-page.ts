@@ -162,7 +162,7 @@ const TREE_SCRIPT = `
       }
     }
 
-    // Search filter — match name, aria-label, aria-description; textContent only for interactive/semantic elements
+    // Search filter — match name, aria-label, aria-description; innerText only for interactive/semantic elements
     if (search) {
       const searchLower = search.toLowerCase();
       const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
@@ -171,7 +171,10 @@ const TREE_SCRIPT = `
         ariaLabel.includes(searchLower) ||
         ariaDesc.includes(searchLower);
       if (!matchesSelf && (interactive || role !== 'generic')) {
-        matchesSelf = (el.textContent || '').toLowerCase().includes(searchLower);
+        try {
+          const text = el.innerText || '';
+          matchesSelf = text.length <= 10000 && text.toLowerCase().includes(searchLower);
+        } catch (e) { /* skip detached/unusual nodes */ }
       }
       if (!matchesSelf && children.length === 0) return null;
     }

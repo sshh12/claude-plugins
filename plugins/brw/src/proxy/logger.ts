@@ -48,6 +48,24 @@ export function createLogger(logFile: string): Logger {
   };
 }
 
+let globalLogger: Logger | null = null;
+
+export function setGlobalLogger(logger: Logger): void {
+  globalLogger = logger;
+}
+
+export function getGlobalLogger(): Logger {
+  if (!globalLogger) {
+    // Fallback: return a stderr-only logger if not yet initialized
+    return {
+      info: (msg, meta) => process.stderr.write(`[INFO] ${msg}${meta ? ' ' + JSON.stringify(meta) : ''}\n`),
+      warn: (msg, meta) => process.stderr.write(`[WARN] ${msg}${meta ? ' ' + JSON.stringify(meta) : ''}\n`),
+      error: (msg, meta) => process.stderr.write(`[ERROR] ${msg}${meta ? ' ' + JSON.stringify(meta) : ''}\n`),
+    };
+  }
+  return globalLogger;
+}
+
 export function readLogTail(logFile: string, lines: number = 50): string {
   try {
     if (!existsSync(logFile)) return '';

@@ -10,7 +10,7 @@ const DEFAULTS: BrwConfig = {
   chromePath: null,
   headless: false,
   screenshotDir: '/tmp/brw-screenshots',
-  idleTimeout: 1800,
+  idleTimeout: 14400,
   windowWidth: 1280,
   windowHeight: 800,
   allowedUrls: ['*'],

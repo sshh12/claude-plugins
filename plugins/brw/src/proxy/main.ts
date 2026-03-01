@@ -37,7 +37,7 @@ import { handleEmulate } from './handlers/emulate.js';
 import { handlePerf } from './handlers/perf.js';
 import { handleProfileList, handleProfileShow } from './handlers/profile.js';
 import { handleRunAction } from './handlers/run-action.js';
-import { createLogger, readLogTail } from './logger.js';
+import { createLogger, setGlobalLogger, readLogTail } from './logger.js';
 import type { Logger } from './logger.js';
 
 let config: BrwConfig;
@@ -93,20 +93,32 @@ async function setupInitialTab(cdpMgr: CDPManager, cfg: BrwConfig): Promise<void
     const tabId = cdpMgr.getActiveTabId() ?? undefined;
     const client = cdpMgr.getClient(tabId);
 
-    // Set viewport to configured dimensions
-    await client.Emulation.setDeviceMetricsOverride({
+    // Navigate away from Chrome's New Tab Page to a blank page
+    // (viewport already set by attachToTarget in connect())
+    await client.Page.navigate({ url: 'about:blank' });
+    await client.Page.loadEventFired();
+
+    // Refresh tab list — navigation to about:blank can change target IDs
+    await cdpMgr.listTabs();
+
+    // Re-acquire client for the (possibly new) active tab and cleanly
+    // reset viewport emulation to clear any NTP layout artifacts
+    const finalTabId = cdpMgr.getActiveTabId() ?? undefined;
+    const finalClient = cdpMgr.getClient(finalTabId);
+
+    await finalClient.Emulation.clearDeviceMetricsOverride();
+    await finalClient.Emulation.setDeviceMetricsOverride({
       width: cfg.windowWidth,
       height: cfg.windowHeight,
       deviceScaleFactor: 1,
       mobile: false,
     });
 
-    // Navigate away from Chrome's New Tab Page to a blank page
-    await client.Page.navigate({ url: 'about:blank' });
-    await client.Page.loadEventFired();
-
-    // Refresh tab list — navigation to about:blank can change target IDs
-    await cdpMgr.listTabs();
+    // Reset scroll position — NTP can leave a non-zero scroll offset
+    await finalClient.Runtime.evaluate({
+      expression: 'window.scrollTo(0, 0)',
+      returnByValue: true,
+    });
   } catch (err) {
     logger.warn(`Failed to set initial viewport/blank page: ${err}`);
   }
@@ -397,6 +409,8 @@ function getErrorHint(code: string): string {
 async function main() {
   config = getConfig();
   logger = createLogger(config.logFile);
+  setGlobalLogger(logger);
+  logger.info(`Config: port=${config.proxyPort} cdp=${config.cdpPort} idle=${config.idleTimeout}s viewport=${config.windowWidth}x${config.windowHeight} headless=${config.headless}`);
 
   // Create download directory
   const downloadDir = join(config.screenshotDir, 'downloads');

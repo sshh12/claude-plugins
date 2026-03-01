@@ -2,6 +2,7 @@ import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
 import { checkAllowedUrl } from '../../shared/config.js';
 import { handleScreenshot } from './screenshot.js';
+import { getGlobalLogger } from '../logger.js';
 
 export async function handleNavigate(
   cdp: CDPManager,
@@ -67,7 +68,8 @@ export async function handleNavigate(
   return { ok: true, screenshot: screenshotResult.screenshot, page };
 }
 
-async function waitForPage(client: any, strategy: string): Promise<void> {
+export async function waitForPage(client: any, strategy: string): Promise<void> {
+  const start = Date.now();
   if (strategy === 'none') return;
 
   if (strategy === 'dom') {
@@ -229,4 +231,7 @@ async function waitForPage(client: any, strategy: string): Promise<void> {
       });
     } catch { /* best effort */ }
   }
+
+  const logger = getGlobalLogger();
+  logger.info(`waitForPage strategy=${strategy} took ${Date.now() - start}ms`);
 }

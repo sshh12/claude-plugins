@@ -22,6 +22,18 @@ Then use `/tmp/brw` for all subsequent commands. **Prerequisites**: Node.js 18+,
 
 The proxy server auto-starts on first command. Chrome launches headed by default (set `BRW_HEADLESS=true` for headless).
 
+## Proxy Lifecycle
+
+The proxy is a **persistent daemon** — it starts automatically on first command and stays running for **4 hours** of idle time (configurable via `BRW_IDLE_TIMEOUT`). You do not need to restart it between commands. Intercept rules, console captures, and network captures all persist within a session.
+
+```bash
+/tmp/brw server status                     # Check if proxy is running
+/tmp/brw server start                      # Manually start (usually not needed)
+/tmp/brw server stop                       # Stop proxy and Chrome
+```
+
+If Chrome crashes, the proxy auto-relaunches on the next command. Sessions, cookies, and tabs survive proxy restarts because the proxy reconnects to an existing Chrome if one is already running on the CDP port.
+
 ## Workflow
 
 1. **Screenshot** to see current state: `/tmp/brw screenshot`
@@ -172,6 +184,7 @@ For complex or multi-line JS, use heredoc (`brw js - <<'JS'`) or `--file` to avo
 ```bash
 /tmp/brw tabs                              # List all tabs
 /tmp/brw new-tab "https://example.com"     # Open URL in new tab
+/tmp/brw new-tab "https://example.com" --wait dom  # Open and wait for page load
 /tmp/brw switch-tab <id>                   # Switch to tab (accepts ID or alias)
 /tmp/brw close-tab <id>                    # Close tab
 /tmp/brw name-tab inbox                    # Name active tab "inbox"
@@ -274,6 +287,9 @@ Returns a screenshot after the final command. See `references/QUICK-MODE.md` for
 - **Global flags**: `--tab <id>` targets a specific tab, `--text` for human-readable output, `--timeout <s>` for request timeout.
 - **Session persistence**: The proxy reconnects to an existing Chrome if one is already running on the CDP port. Sessions, cookies, and tabs survive proxy restarts.
 - **Hidden overlays (Gmail compose, etc.)**: Content inside `aria-hidden` ancestors is excluded from the a11y tree. Use `--scope "[role='dialog']"` with `read-page` to target the overlay directly.
+- **Complex pages (GitHub, Gmail)**: `--search` on large pages can be slow. Narrow first with `--scope`: `/tmp/brw read-page --scope "main" --search "Submit"`
+- **Canvas-rendered apps (GDocs/Sheets)**: `type` may drop characters. Use `brw js` with clipboard API + `brw key "cmd+v"` for reliable text insertion.
+- **SPAs with noisy `get-text`**: Use `brw js` with targeted DOM queries for clean content extraction.
 
 ## Configuration
 

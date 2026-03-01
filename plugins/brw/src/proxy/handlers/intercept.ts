@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import type { CDPManager } from '../cdp.js';
 import type { ApiResponse } from '../../shared/types.js';
+import { getGlobalLogger } from '../logger.js';
 
 interface InterceptRule {
   id: string;
@@ -80,6 +81,9 @@ export async function handleIntercept(
     // Enable Fetch domain with the pattern
     await updateFetchPatterns(client, tabId);
 
+    const logger = getGlobalLogger();
+    logger.info('intercept add', { ruleId: rule.id, pattern: rule.pattern, ruleCount: interceptRules.get(tabId)!.length });
+
     return { ok: true, ruleId: rule.id };
   }
 
@@ -108,6 +112,9 @@ export async function handleIntercept(
     }
     rules.splice(idx, 1);
 
+    const logger = getGlobalLogger();
+    logger.info('intercept remove', { ruleId: params.ruleId, remaining: rules.length });
+
     if (rules.length === 0) {
       interceptRules.delete(tabId);
       registeredListeners.delete(tabId);
@@ -124,6 +131,8 @@ export async function handleIntercept(
   }
 
   if (action === 'clear') {
+    const logger = getGlobalLogger();
+    logger.info('intercept clear', { tabId });
     interceptRules.delete(tabId);
     registeredListeners.delete(tabId);
     try {
