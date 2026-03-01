@@ -1,0 +1,12 @@
+{
+  "name": "sshh12-plugins",
+  "owner": {
+    "name": "sshh12"
+  },
+  "metadata": {
+    "description": "Claude Code plugin marketplace by sshh12",
+    "version": "0.1.0",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": []
+}
