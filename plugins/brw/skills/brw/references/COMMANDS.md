@@ -58,7 +58,7 @@ Read-only commands: read-page, get-text, js, tabs, new-tab, close-tab, console, 
 | 1 | Usage/argument error |
 | 2 | Proxy connection error |
 | 3 | Browser/CDP error |
-| 4 | URL blocked by allowlist |
+| 4 | URL or protocol blocked by security policy |
 
 ---
 
@@ -79,7 +79,8 @@ brw navigate forward [--tab ID]
 - Auto-prepends `https://` if no protocol given
 - `back` and `forward` use browser history
 - Returns `download` field if a file download was triggered
-- Subject to URL allowlist (`BRW_ALLOWED_URLS`)
+- Subject to protocol blocklist (`BRW_BLOCKED_PROTOCOLS`) and URL policy (`BRW_ALLOWED_URLS`, `BRW_BLOCKED_URLS`)
+- Blocked protocols by default: `file`, `javascript`, `data`, `chrome`, `chrome-extension`, `view-source`, `ftp`
 
 ---
 
@@ -427,12 +428,18 @@ Attaches files to a file input element.
 ### `brw cookies`
 
 ```bash
-brw cookies [--tab ID]                                     # List all
+brw cookies [--all-domains] [--tab ID]                     # List cookies (default: current domain only)
 brw cookies get <name> [--tab ID]                          # Get one
 brw cookies set <name> <value> [--domain D] [--path P] [--expires EPOCH] [--secure] [--httponly] [--tab ID]
 brw cookies delete <name> [--tab ID]
 brw cookies clear [--tab ID]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--all-domains` | Show cookies from all domains (default: current tab domain only) |
+
+Cookie listing is scoped to the current tab's domain by default. This prevents cross-domain cookie access via prompt injection. Use `--all-domains` for explicit cross-domain access, or set `cookieScope: "all"` in config.
 
 ### `brw storage`
 
@@ -542,6 +549,7 @@ brw server status [--port PORT]
 
 - `server stop` kills both the proxy and Chrome (all tabs lost)
 - `server restart` restarts only the proxy, keeping Chrome alive (tabs preserved)
+- `server status` returns runtime info plus all resolved security config (blockedProtocols, blockedUrls, allowedUrls, disabledCommands, cookieScope, auditLog, etc.)
 
 ### `brw log`
 
@@ -580,6 +588,12 @@ Priority (highest wins): Environment variables > `.claude/brw.json` > `~/.config
 | Idle timeout | `BRW_IDLE_TIMEOUT` | 1800s |
 | Window size | `BRW_WIDTH` / `BRW_HEIGHT` | 1280 x 800 |
 | URL allowlist | `BRW_ALLOWED_URLS` | `*` (all) |
+| URL blocklist | `BRW_BLOCKED_URLS` | `*169.254.169.254*,*metadata.google.internal*` |
+| Blocked protocols | `BRW_BLOCKED_PROTOCOLS` | `file,javascript,data,chrome,chrome-extension,view-source,ftp` |
+| Disabled commands | `BRW_DISABLED_COMMANDS` | (none) |
+| Cookie scope | `BRW_COOKIE_SCOPE` | `tab` |
+| Audit log | `BRW_AUDIT_LOG` | (disabled) |
+| Allowed paths | `BRW_ALLOWED_PATHS` | (unrestricted) |
 | Auto-screenshot | `BRW_AUTO_SCREENSHOT` | true |
 | Log file | `BRW_LOG_FILE` | `/tmp/brw-proxy.log` |
 

@@ -9,7 +9,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.6.2')
+  .version('0.6.4')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--plain', 'Output as plain text instead of JSON')
@@ -68,7 +68,7 @@ async function run(
       if (exitCodeMap && exitCodeMap[code] !== undefined) {
         process.exit(exitCodeMap[code]);
       }
-      if (code === 'URL_BLOCKED') process.exit(ExitCode.URL_BLOCKED);
+      if (code === 'URL_BLOCKED' || code === 'PROTOCOL_BLOCKED') process.exit(ExitCode.URL_BLOCKED);
       if (code === 'INVALID_ARGUMENT') process.exit(ExitCode.USAGE_ERROR);
       process.exit(ExitCode.CDP_ERROR);
     }
@@ -551,8 +551,9 @@ program
 const cookiesCmd = program
   .command('cookies')
   .description('List cookies for the current page')
-  .action(async () => {
-    await run('POST', '/api/cookies', { action: 'list' });
+  .option('--all-domains', 'Show cookies from all domains (default: current tab domain only)')
+  .action(async (opts) => {
+    await run('POST', '/api/cookies', { action: 'list', allDomains: opts.allDomains });
   });
 
 cookiesCmd
@@ -1086,6 +1087,16 @@ serverCmd
         port: result.port,
         chromeVersion: result.chromeVersion,
         uptime: result.uptime,
+        // Security config
+        blockedProtocols: result.blockedProtocols,
+        blockedUrls: result.blockedUrls,
+        allowedUrls: result.allowedUrls,
+        disabledCommands: result.disabledCommands,
+        cookieScope: result.cookieScope,
+        auditLog: result.auditLog,
+        allowedPaths: result.allowedPaths,
+        headless: result.headless,
+        autoScreenshot: result.autoScreenshot,
       }, globals.text) + '\n');
     } catch {
       process.stdout.write(formatOutput({ ok: true, running: false, pid: null, port: null, chromeVersion: null }, globals.text) + '\n');

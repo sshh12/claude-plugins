@@ -1,8 +1,9 @@
 import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
-import { checkUrlPolicy } from '../../shared/config.js';
+import { checkUrlPolicy, checkProtocol } from '../../shared/config.js';
 import { handleScreenshot } from './screenshot.js';
 import { getGlobalLogger, audit } from '../logger.js';
+import { ErrorCode } from '../../shared/types.js';
 
 export async function handleNavigate(
   cdp: CDPManager,
@@ -33,8 +34,19 @@ export async function handleNavigate(
     await client.Page.navigateToHistoryEntry({ entryId: history.entries[idx].id });
     await waitForPage(client, waitStrategy);
 
-    // Check resulting URL against policy
+    // Check resulting URL against protocol blocklist and URL policy
     const histPage = await cdp.getPageInfo(tabId);
+    const histProtocol = checkProtocol(histPage.url, config.blockedProtocols);
+    if (histProtocol) {
+      audit('navigate', { url: histPage.url, allowed: false, direction: target, reason: 'protocol_blocked', protocol: histProtocol });
+      await client.Page.navigate({ url: 'about:blank' });
+      return {
+        ok: false,
+        error: `Navigation ${target} resulted in blocked protocol: ${histProtocol}://`,
+        code: ErrorCode.PROTOCOL_BLOCKED,
+        hint: `${histProtocol}:// is blocked by default. Set BRW_BLOCKED_PROTOCOLS to override (comma-separated), or use empty string to allow all protocols.`,
+      };
+    }
     if (!checkUrlPolicy(histPage.url, config.allowedUrls, config.blockedUrls)) {
       audit('navigate', { url: histPage.url, allowed: false, direction: target });
       await client.Page.navigate({ url: 'about:blank' });
@@ -52,8 +64,20 @@ export async function handleNavigate(
 
   // Auto-prepend https:// if no protocol
   let url = target;
-  if (!/^https?:\/\//i.test(url) && !url.startsWith('about:') && !url.startsWith('file:')) {
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)) {
     url = 'https://' + url;
+  }
+
+  // Check protocol blocklist before URL policy
+  const blockedProto = checkProtocol(url, config.blockedProtocols);
+  if (blockedProto) {
+    audit('navigate', { url, allowed: false, reason: 'protocol_blocked', protocol: blockedProto });
+    return {
+      ok: false,
+      error: `Protocol "${blockedProto}://" is blocked by security policy`,
+      code: ErrorCode.PROTOCOL_BLOCKED,
+      hint: `${blockedProto}:// is blocked by default to prevent local file access via prompt injection. Set BRW_BLOCKED_PROTOCOLS to allow specific protocols, or add '${blockedProto}' to your config's blockedProtocols override.`,
+    };
   }
 
   // Check URL policy

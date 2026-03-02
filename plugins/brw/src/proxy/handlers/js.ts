@@ -1,6 +1,7 @@
 import type { CDPManager } from '../cdp.js';
 import type { ApiResponse, BrwConfig } from '../../shared/types.js';
-import { checkUrlPolicy } from '../../shared/config.js';
+import { checkUrlPolicy, checkProtocol } from '../../shared/config.js';
+import { ErrorCode } from '../../shared/types.js';
 import { audit } from '../logger.js';
 
 // Serializer function injected into the page to handle DOMRect, DOMPoint, etc.
@@ -42,7 +43,7 @@ export async function handleJs(
 ): Promise<ApiResponse> {
   // Capture URL before execution for post-exec check
   let urlBefore: string | undefined;
-  const needsUrlCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0);
+  const needsUrlCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0) || config.blockedProtocols.length > 0;
   if (needsUrlCheck) {
     try {
       const pageInfo = await cdp.getPageInfo(params.tab);
@@ -157,11 +158,33 @@ async function postExecUrlCheck(
   expression: string,
   urlBefore: string | undefined
 ): Promise<ApiResponse | null> {
-  const needsCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0);
+  const needsCheck = !(config.allowedUrls.length === 1 && config.allowedUrls[0] === '*' && config.blockedUrls.length === 0) || config.blockedProtocols.length > 0;
   if (!needsCheck) return null;
 
   try {
     const page = await cdp.getPageInfo(tabId);
+
+    // Check protocol blocklist first
+    const blockedProto = checkProtocol(page.url, config.blockedProtocols);
+    if (blockedProto) {
+      audit('js', {
+        expression: expression.substring(0, 200),
+        urlBefore: urlBefore || 'unknown',
+        urlAfter: page.url,
+        blocked: true,
+        reason: 'protocol_blocked',
+        protocol: blockedProto,
+      });
+      const client = cdp.getClient(tabId);
+      await client.Page.navigate({ url: 'about:blank' });
+      return {
+        ok: false,
+        error: `JS execution navigated to blocked protocol: ${blockedProto}://`,
+        code: ErrorCode.PROTOCOL_BLOCKED,
+        hint: `${blockedProto}:// is blocked by default. Set BRW_BLOCKED_PROTOCOLS to override.`,
+      };
+    }
+
     if (!checkUrlPolicy(page.url, config.allowedUrls, config.blockedUrls)) {
       audit('js', {
         expression: expression.substring(0, 200),

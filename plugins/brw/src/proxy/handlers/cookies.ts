@@ -1,6 +1,15 @@
 import type { CDPManager } from '../cdp.js';
-import type { ApiResponse } from '../../shared/types.js';
+import type { ApiResponse, BrwConfig } from '../../shared/types.js';
 import { audit } from '../logger.js';
+
+/**
+ * Check if a cookie domain matches the given hostname.
+ * Cookie domains may start with '.' (e.g., '.example.com') which matches subdomains.
+ */
+function cookieDomainMatches(cookieDomain: string, hostname: string): boolean {
+  const cd = cookieDomain.startsWith('.') ? cookieDomain.substring(1) : cookieDomain;
+  return hostname === cd || hostname.endsWith('.' + cd);
+}
 
 export async function handleCookies(
   cdp: CDPManager,
@@ -13,16 +22,40 @@ export async function handleCookies(
     expires?: number;
     secure?: boolean;
     httponly?: boolean;
+    allDomains?: boolean;
     tab?: string;
-  }
+  },
+  config?: BrwConfig
 ): Promise<ApiResponse> {
   const tabId = params.tab;
   const client = cdp.getClient(tabId);
   const action = params.action || 'list';
+  const scopeAll = params.allDomains || (config?.cookieScope === 'all');
 
   if (action === 'list') {
+    if (scopeAll) {
+      // Use getAllCookies for cross-domain access
+      const { cookies } = await (client as any).Storage.getCookies();
+      return { ok: true, cookies };
+    }
+
+    // Default: scope to current tab's domain
     const { cookies } = await client.Network.getCookies();
-    return { ok: true, cookies };
+    let hostname = '';
+    try {
+      const pageInfo = await cdp.getPageInfo(tabId);
+      hostname = new URL(pageInfo.url).hostname;
+    } catch {
+      // Can't determine domain — return page-scoped cookies
+      return { ok: true, cookies };
+    }
+
+    const filtered = cookies.filter((c: any) => cookieDomainMatches(c.domain, hostname));
+    return {
+      ok: true,
+      cookies: filtered,
+      hint: `Showing cookies for ${hostname} only. Use --all-domains to see all cookies, or set cookieScope: "all" in config.`,
+    };
   }
 
   if (action === 'get') {

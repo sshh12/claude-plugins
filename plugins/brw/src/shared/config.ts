@@ -22,10 +22,12 @@ const DEFAULTS: BrwConfig = {
   windowWidth: 1280,
   windowHeight: 800,
   allowedUrls: ['*'],
-  blockedUrls: [],
+  blockedUrls: ['*169.254.169.254*', '*metadata.google.internal*'],
+  blockedProtocols: ['file', 'javascript', 'data', 'chrome', 'chrome-extension', 'view-source', 'ftp'],
   disabledCommands: [],
   auditLog: null,
   allowedPaths: null,
+  cookieScope: 'tab',
   autoScreenshot: true,
   logFile: defaultLogFile,
   chromeLaunch: true,
@@ -43,9 +45,11 @@ interface ConfigFile {
   windowHeight?: number;
   allowedUrls?: string[];
   blockedUrls?: string[];
+  blockedProtocols?: string[];
   disabledCommands?: string[];
   auditLog?: string;
   allowedPaths?: string[];
+  cookieScope?: string;
   autoScreenshot?: boolean;
   logFile?: string;
   chromeLaunch?: boolean;
@@ -262,9 +266,11 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
     windowHeight: resolveNumber(env.BRW_HEIGHT, repoConfig?.windowHeight, userConfig?.windowHeight, DEFAULTS.windowHeight),
     allowedUrls: resolveAllowedUrls(env.BRW_ALLOWED_URLS, repoConfig?.allowedUrls, userConfig?.allowedUrls, DEFAULTS.allowedUrls),
     blockedUrls: resolveUnionStringArray(env.BRW_BLOCKED_URLS, repoConfig?.blockedUrls, userConfig?.blockedUrls, DEFAULTS.blockedUrls),
+    blockedProtocols: resolveStringArray(env.BRW_BLOCKED_PROTOCOLS, repoConfig?.blockedProtocols, userConfig?.blockedProtocols, DEFAULTS.blockedProtocols),
     disabledCommands: resolveUnionStringArray(env.BRW_DISABLED_COMMANDS, repoConfig?.disabledCommands, userConfig?.disabledCommands, DEFAULTS.disabledCommands),
     auditLog: resolveStringOrNull(env.BRW_AUDIT_LOG, repoConfig?.auditLog, userConfig?.auditLog, DEFAULTS.auditLog),
     allowedPaths: resolveStringArrayOrNull(env.BRW_ALLOWED_PATHS, repoConfig?.allowedPaths, userConfig?.allowedPaths, DEFAULTS.allowedPaths),
+    cookieScope: resolveString(env.BRW_COOKIE_SCOPE, repoConfig?.cookieScope, userConfig?.cookieScope, DEFAULTS.cookieScope),
     autoScreenshot: resolveBoolean(env.BRW_AUTO_SCREENSHOT, repoConfig?.autoScreenshot, userConfig?.autoScreenshot, DEFAULTS.autoScreenshot),
     logFile: resolveString(env.BRW_LOG_FILE, repoConfig?.logFile, userConfig?.logFile, DEFAULTS.logFile),
     chromeLaunch: resolveBoolean(env.BRW_CHROME_LAUNCH, repoConfig?.chromeLaunch, userConfig?.chromeLaunch, DEFAULTS.chromeLaunch),
@@ -339,6 +345,23 @@ export function checkAllowedPath(filePath: string, allowedPaths: string[] | null
     }
   }
   return false;
+}
+
+/**
+ * Check if a URL's protocol is blocked.
+ * Returns the protocol name if blocked, or null if allowed.
+ */
+export function checkProtocol(url: string, blockedProtocols: string[]): string | null {
+  if (blockedProtocols.length === 0) return null;
+  try {
+    const colonIdx = url.indexOf(':');
+    if (colonIdx === -1) return null;
+    const protocol = url.substring(0, colonIdx).toLowerCase();
+    if (blockedProtocols.includes(protocol)) return protocol;
+  } catch {
+    // best effort
+  }
+  return null;
 }
 
 /**

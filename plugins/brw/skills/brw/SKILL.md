@@ -228,7 +228,8 @@ Dialogs auto-dismiss after 5 seconds if not handled explicitly.
 ### Cookies & Storage
 
 ```bash
-/tmp/brw cookies                           # List cookies for current page
+/tmp/brw cookies                           # List cookies for current tab domain
+/tmp/brw cookies --all-domains             # List all cookies across domains
 /tmp/brw cookies get "session_id"          # Get specific cookie
 /tmp/brw cookies set "name" "value"        # Set cookie
 /tmp/brw storage get "key"                 # Get localStorage value
@@ -297,41 +298,9 @@ Set via environment variables (`BRW_*`), `.claude/brw.json` (per-repo), or `~/.c
 
 Key variables: `BRW_HEADLESS`, `BRW_CHROME_PATH`, `BRW_PORT`, `BRW_SCREENSHOT_DIR`, `BRW_ALLOWED_URLS`, `BRW_AUTO_SCREENSHOT` (set to `false` to disable auto-screenshots on mutation commands — useful for automation loops), `BRW_CHROME_LAUNCH` (set to `false` to connect to an existing Chrome instead of launching one).
 
-## Security Configuration
+## Security
 
-Enterprise security controls restrict what brw can do. Set in `~/.config/brw/config.json` (user) or `.claude/brw.json` (repo). Repo config cannot weaken user security settings — it can only tighten restrictions.
-
-```bash
-# Deny-list URLs (glob patterns, checked after allowlist)
-BRW_BLOCKED_URLS="*admin*,169.254.169.254"
-
-# Disable commands at the proxy level
-BRW_DISABLED_COMMANDS="js,intercept,cookies,storage"
-
-# Structured JSONL audit log for compliance
-BRW_AUDIT_LOG="/var/log/brw-audit.jsonl"
-
-# Restrict file I/O to directory prefixes
-BRW_ALLOWED_PATHS="/tmp,/home/user/projects"
-```
-
-Example enterprise config (`~/.config/brw/config.json`):
-
-```json
-{
-  "allowedUrls": ["*.corp.com"],
-  "blockedUrls": ["*admin*", "169.254.169.254"],
-  "disabledCommands": ["js", "intercept"],
-  "auditLog": "/var/log/brw-audit.jsonl",
-  "allowedPaths": ["/tmp", "/home/user/projects"]
-}
-```
-
-Config lockdown rules:
-- **allowedUrls**: If user config is restrictive (not `["*"]`), repo config cannot override it.
-- **blockedUrls**: Union of user + repo entries. Repo can only add blocked URLs.
-- **disabledCommands**: Union of user + repo entries. Repo can only add disabled commands.
-- Env vars (`BRW_*`) always take highest priority.
+brw blocks dangerous protocols (`file://`, `javascript:`, `data:`, etc.) and cloud metadata endpoints by default. Cookies are scoped to the current tab's domain. Run `/tmp/brw server status` to see the active security posture. See `references/SECURITY.md` for the full threat model, recommended configs, and per-command security notes.
 
 ## App Profiles
 
@@ -349,5 +318,6 @@ Profiles live in `.claude/brw/profiles/<name>/` (repo) or `~/.config/brw/profile
 ## References
 
 - **Full command reference**: `references/COMMANDS.md` — all flags, output fields, and edge cases
+- **Security reference**: `references/SECURITY.md` — threat model, default protections, recommended configs
 - **Quick mode reference**: `references/QUICK-MODE.md` — command table and multi-step examples
 - **App profiles reference**: `references/PROFILES.md` — profile format, discovery, authoring guide

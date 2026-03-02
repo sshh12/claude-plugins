@@ -2,7 +2,7 @@ import CDP from 'chrome-remote-interface';
 import Fastify from 'fastify';
 import { mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { getConfig, checkUrlPolicy, checkAllowedPath, getSecurityWarnings, resolveConfig } from '../shared/config.js';
+import { getConfig, getSecurityWarnings } from '../shared/config.js';
 import { ErrorCode } from '../shared/types.js';
 import type { BrwConfig, ApiResponse } from '../shared/types.js';
 import { launchChrome, writePidFile, removePidFile, detectChromePath, getChromeVersion } from './chrome.js';
@@ -393,6 +393,7 @@ function errorResponse(err: any): ApiResponse {
   if (message.includes('Ref') && message.includes('not found')) code = ErrorCode.REF_NOT_FOUND;
   if (message.includes('Selector') && message.includes('not found')) code = ErrorCode.SELECTOR_NOT_FOUND;
   if (message.includes('Handler timeout exceeded')) code = ErrorCode.TIMEOUT;
+  if (message.includes('protocol') && message.includes('blocked')) code = ErrorCode.PROTOCOL_BLOCKED;
   if (message.includes('Could not handle dialog') || message.includes('No dialog')) code = ErrorCode.DIALOG_NOT_FOUND;
 
   return {
@@ -445,6 +446,8 @@ function getErrorHint(code: string): string {
       return 'Check disabledCommands in brw config or BRW_DISABLED_COMMANDS env var';
     case ErrorCode.PATH_BLOCKED:
       return 'Check allowedPaths in brw config or BRW_ALLOWED_PATHS env var';
+    case ErrorCode.PROTOCOL_BLOCKED:
+      return 'Set BRW_BLOCKED_PROTOCOLS to override blocked protocols (comma-separated), or use empty string to allow all.';
     default:
       return '';
   }
@@ -470,7 +473,9 @@ async function main() {
   logger.info('Security policy', {
     allowedUrls: config.allowedUrls,
     blockedUrls: config.blockedUrls,
+    blockedProtocols: config.blockedProtocols,
     disabledCommands: config.disabledCommands,
+    cookieScope: config.cookieScope,
     auditLog: config.auditLog || 'disabled',
     allowedPaths: config.allowedPaths || 'unrestricted',
   });
@@ -551,6 +556,16 @@ async function main() {
       cdpConnected: cdpOk,
       chromeCrashed,
       lastCrashTime,
+      // Resolved security config
+      blockedProtocols: config.blockedProtocols,
+      blockedUrls: config.blockedUrls,
+      allowedUrls: config.allowedUrls,
+      disabledCommands: config.disabledCommands,
+      cookieScope: config.cookieScope,
+      auditLog: config.auditLog,
+      allowedPaths: config.allowedPaths,
+      headless: config.headless,
+      autoScreenshot: config.autoScreenshot,
     };
   });
 
@@ -606,7 +621,7 @@ async function main() {
   server.post('/api/console', readHandler('console', async (body) => handleConsole(cdp, body)));
   server.post('/api/network', readHandler('network', async (body) => handleNetwork(cdp, body)));
   server.post('/api/network-body', readHandler('network-body', async (body) => handleNetworkBody(cdp, body)));
-  server.post('/api/cookies', readHandler('cookies', async (body) => handleCookies(cdp, body)));
+  server.post('/api/cookies', readHandler('cookies', async (body) => handleCookies(cdp, body, config)));
   server.post('/api/storage', readHandler('storage', async (body) => handleStorage(cdp, body)));
   server.post('/api/intercept', readHandler('intercept', async (body) => handleIntercept(cdp, body, config)));
   server.post('/api/pdf', readHandler('pdf', async (body) => handlePdf(cdp, config, body)));
