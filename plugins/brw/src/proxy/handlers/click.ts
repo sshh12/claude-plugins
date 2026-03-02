@@ -36,7 +36,7 @@ export async function handleClick(
       returnByValue: true,
     });
     if (!result.result?.value) {
-      return { ok: false, error: `Ref ${params.ref} not found`, code: 'REF_NOT_FOUND' };
+      return { ok: false, error: `Ref ${params.ref} not found`, code: 'REF_NOT_FOUND', hint: 'Refs expire after navigation or DOM mutations. Run "brw read-page" to get fresh refs.' };
     }
     const coords = JSON.parse(result.result.value);
     x = coords.x;
@@ -88,6 +88,7 @@ export async function handleClick(
     x,
     y,
     modifiers,
+    pointerType: 'mouse',
   });
   await new Promise((r) => setTimeout(r, 100));
 
@@ -100,6 +101,7 @@ export async function handleClick(
       button,
       clickCount: i + 1,
       modifiers,
+      pointerType: 'mouse',
     });
     await client.Input.dispatchMouseEvent({
       type: 'mouseReleased',
@@ -108,6 +110,7 @@ export async function handleClick(
       button,
       clickCount: i + 1,
       modifiers,
+      pointerType: 'mouse',
     });
   }
 

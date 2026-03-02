@@ -31,7 +31,7 @@ export async function handleHover(
       returnByValue: true,
     });
     if (!result.result?.value) {
-      return { ok: false, error: `Ref ${params.ref} not found`, code: 'REF_NOT_FOUND' };
+      return { ok: false, error: `Ref ${params.ref} not found`, code: 'REF_NOT_FOUND', hint: 'Refs expire after navigation or DOM mutations. Run "brw read-page" to get fresh refs.' };
     }
     const coords = JSON.parse(result.result.value);
     x = coords.x;
@@ -63,6 +63,7 @@ export async function handleHover(
     type: 'mouseMoved',
     x,
     y,
+    pointerType: 'mouse',
   });
 
   // Small delay for hover effects

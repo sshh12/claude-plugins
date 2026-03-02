@@ -136,31 +136,38 @@ const TREE_SCRIPT = `
     if (depth > maxDepth) return null;
     if (!el || el.nodeType !== 1) return null;
 
-    // Skip hidden elements
-    const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') return null;
+    // Skip hidden elements (guard against detached nodes)
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') return null;
+    } catch (e) { return null; }
     if (!includeHidden && el.getAttribute('aria-hidden') === 'true') return null;
 
-    const role = getRole(el);
-    const name = getAccessibleName(el);
-    const interactive = isInteractive(el);
+    var role, name, interactive;
+    try {
+      role = getRole(el);
+      name = getAccessibleName(el);
+      interactive = isInteractive(el);
+    } catch (e) { return null; }
 
     // For interactive filter, skip non-interactive elements but still traverse children
     const include = filter === 'all' || interactive || role !== 'generic';
 
     // Build children (light DOM + shadow DOM)
     const children = [];
-    for (const child of el.children) {
-      const childNode = buildTree(child, depth + 1, maxDepth, filter, search, includeHidden);
-      if (childNode) children.push(childNode);
-    }
-    // Traverse shadow DOM if present (open shadow roots only)
-    if (el.shadowRoot) {
-      for (const child of el.shadowRoot.children) {
+    try {
+      for (const child of el.children) {
         const childNode = buildTree(child, depth + 1, maxDepth, filter, search, includeHidden);
         if (childNode) children.push(childNode);
       }
-    }
+      // Traverse shadow DOM if present (open shadow roots only)
+      if (el.shadowRoot) {
+        for (const child of el.shadowRoot.children) {
+          const childNode = buildTree(child, depth + 1, maxDepth, filter, search, includeHidden);
+          if (childNode) children.push(childNode);
+        }
+      }
+    } catch (e) { /* skip inaccessible children */ }
 
     // Search filter — match name, aria-label, aria-description, placeholder, title, value; innerText only for interactive/semantic elements
     if (search) {
@@ -179,7 +186,7 @@ const TREE_SCRIPT = `
       if (!matchesSelf && (interactive || role !== 'generic')) {
         try {
           const text = el.innerText || '';
-          matchesSelf = text.length <= 10000 && text.toLowerCase().includes(searchLower);
+          matchesSelf = text.length <= 5000 && text.toLowerCase().includes(searchLower);
         } catch (e) { /* skip detached/unusual nodes */ }
       }
       if (!matchesSelf && children.length === 0) return null;
@@ -219,9 +226,19 @@ const TREE_SCRIPT = `
     return node;
   }
 
-  const root = options.rootEl || document.body;
-  const tree = buildTree(root, 0, options.maxDepth || 30, options.filter || 'all', options.search || '', !!options.includeHidden);
-  return JSON.stringify({ tree, refCount: window.__brwRefCounter });
+  try {
+    const root = options.rootEl || document.body;
+    if (!root) return JSON.stringify({ tree: null, refCount: window.__brwRefCounter });
+
+    // Detect canvas-heavy pages for hints
+    var canvasCount = document.querySelectorAll('canvas').length;
+    var iframeCount = document.querySelectorAll('iframe').length;
+
+    const tree = buildTree(root, 0, options.maxDepth || 30, options.filter || 'all', options.search || '', !!options.includeHidden);
+    return JSON.stringify({ tree, refCount: window.__brwRefCounter, canvasCount, iframeCount });
+  } catch (e) {
+    return JSON.stringify({ tree: null, refCount: window.__brwRefCounter || 0, error: e.message || String(e) });
+  }
 })
 `;
 
@@ -289,14 +306,30 @@ export async function handleReadPage(
 
   const result = await client.Runtime.evaluate(evaluateOptions);
   if (result.exceptionDetails) {
+    const detail = result.exceptionDetails.exception?.description
+      || result.exceptionDetails.exception?.value
+      || result.exceptionDetails.text
+      || 'Unknown error';
     return {
       ok: false,
-      error: `Failed to read page: ${result.exceptionDetails.text}`,
+      error: `Failed to read page: ${detail}`,
       code: 'CDP_ERROR',
+      hint: 'The page DOM may be too complex. Try --scope "main" to narrow the subtree, or --filter interactive --limit 50.',
     };
   }
 
   const data = JSON.parse(result.result?.value || '{}');
+
+  // Handle in-page errors from the try/catch wrapper
+  if (data.error) {
+    return {
+      ok: false,
+      error: `Failed to read page: ${data.error}`,
+      code: 'CDP_ERROR',
+      hint: 'The page DOM may be too complex. Try --scope "main" to narrow the subtree, or --filter interactive --limit 50.',
+    };
+  }
+
   let tree = formatTree(data.tree, 0);
 
   // Apply ref limit truncation
@@ -322,6 +355,19 @@ export async function handleReadPage(
     tree = tree.substring(0, maxChars) + '\n... (truncated)';
   }
 
+  // Build response with hints
+  const response: ApiResponse = { ok: true, tree, refCount: data.refCount };
+
+  // Canvas hint — when page has <canvas> elements that may dominate the visual content
+  if (data.canvasCount > 0) {
+    response.hint = `Page has ${data.canvasCount} canvas element(s). Canvas-rendered content is not visible to read-page. Use screenshot for visual state, js for programmatic access.`;
+  }
+
+  // Iframe hint — inform about available iframes
+  if (data.iframeCount > 0 && !params.frame) {
+    response.iframes = data.iframeCount;
+  }
+
   // Search diagnostics when no results found
   if (params.search && (!data.tree || tree.trim() === '')) {
     return {
@@ -332,12 +378,12 @@ export async function handleReadPage(
         query: params.search,
         totalRefs: data.refCount,
         searchFields: ['name', 'aria-label', 'aria-description', 'placeholder', 'title', 'value', 'innerText'],
-        hint: `No elements matched "${params.search}". Try a shorter query, or use read-page without --search to see all elements.`,
+        hint: `No elements matched "${params.search}". Try a shorter query, --scope to narrow the subtree, or read-page without --search to see all elements.`,
       },
     };
   }
 
-  return { ok: true, tree, refCount: data.refCount };
+  return response;
 }
 
 function formatTree(node: any, indent: number): string {

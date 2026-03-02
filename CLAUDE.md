@@ -55,6 +55,10 @@ When building skills for plugins, refer to these guides:
   - Include feedback loops (run validator -> fix -> repeat) and checklists for complex workflows
   - For executable scripts: handle errors explicitly, document constants, prefer execution over loading into context
 
+## Development Workflow
+
+We are responsible for end-to-end testing everything we build. After making changes to a plugin, always build and run verification tests yourself rather than asking the user to test. This includes: `tsc --noEmit`, `bash build.sh`, and functional smoke tests against a running instance.
+
 ## Usage
 
 ```sh

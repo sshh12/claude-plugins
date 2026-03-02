@@ -147,7 +147,7 @@ document.querySelectorAll('a').forEach(a => console.log(a.href))
 JS
 ```
 
-For complex or multi-line JS, use heredoc (`brw js - <<'JS'`) or `--file` to avoid shell quoting issues. `await` in heredoc/file input is auto-wrapped in an async IIFE — no manual wrapping needed.
+For complex or multi-line JS, use heredoc (`brw js - <<'JS'`) or `--file` to avoid shell quoting issues. `await` in heredoc/file input is auto-wrapped in an async IIFE — no manual wrapping needed. **Note**: multi-line heredoc input requires explicit `return` for the last value (single-line expressions auto-return).
 
 ### Scroll
 
@@ -279,22 +279,17 @@ Returns a screenshot after the final command. See `references/QUICK-MODE.md` for
 
 ## Tips
 
-- **Refs over coordinates**: When `read-page` gives you ref IDs, prefer `--ref ref_X` over coordinate clicks. Refs are more reliable.
-- **Skip auto-screenshot**: Use `--no-screenshot` when chaining multiple actions before a manual screenshot. Saves time.
-- **Check login state**: Before re-authenticating, use `/tmp/brw cookies` or `/tmp/brw js "document.cookie"` to check if already logged in. Sessions persist across proxy restarts.
-- **Iframes**: Use `--frame 0` (by index) or `--frame "name"` to target iframe content in `read-page`, `js`, and `form-input`. Click/type/key work across frames since they dispatch at viewport coordinates.
-- **Multi-agent**: Each agent should use its own tab via `--tab <id>`. Create tabs with `/tmp/brw new-tab`.
-- **Dynamic content**: Use `/tmp/brw wait-for` instead of polling with `read-page` when waiting for async content.
-- **SPAs**: Use `--wait render` with navigate for single-page apps that load content dynamically after initial page load. For heavy apps like Gmail, prefer `--wait dom` + `wait-for --selector` to avoid long render waits.
-- **External Chrome**: To connect to an already-running Chrome, start it with `--remote-debugging-port=9222` and set `BRW_CHROME_LAUNCH=false`. The proxy will connect to the existing Chrome instance instead of launching a new one.
-- **Global flags**: `--tab <id>` targets a specific tab, `--plain` for human-readable output, `--http-timeout <s>` for request timeout.
-- **Session persistence**: The proxy reconnects to an existing Chrome if one is already running on the CDP port. Sessions, cookies, and tabs survive proxy restarts.
-- **Hidden overlays (Gmail compose, etc.)**: Content inside `aria-hidden` ancestors is excluded by default. Use `--include-hidden` to include them, or `--scope "[role='dialog']"` to target the overlay directly.
-- **Complex pages (GitHub, Gmail)**: `--search` on large pages can be slow. Narrow first with `--scope`: `/tmp/brw read-page --scope "main" --search "Submit"`
-- **Canvas-rendered apps (GDocs/Sheets)**: `type` may drop characters. Use `brw js` with clipboard API + `brw key "cmd+v"` for reliable text insertion.
-- **SPAs with noisy `get-text`**: Use `brw js` with targeted DOM queries for clean content extraction.
-- **PDF**: `brw pdf` requires headless mode (`BRW_HEADLESS=true` or `brw server start --headless`). In headed mode, it returns a clear error with instructions.
-- **Multi-tab performance**: Close tabs you're not actively using. With 5+ tabs on heavy SPAs, the proxy may slow down. Use `server restart` to recover from an unresponsive proxy without losing tabs.
+- **Refs over coordinates**: Prefer `--ref ref_X` over coordinate clicks — refs are more reliable and survive scrolling.
+- **Skip auto-screenshot**: Use `--no-screenshot` when chaining actions before a manual screenshot. Saves time.
+- **SPAs**: Use `--wait render` for SPAs. For heavy apps (Gmail), prefer `--wait dom` + `wait-for --selector`.
+- **Iframes**: Use `--frame 0` (by index) or `--frame "name"` for iframe content. `read-page` returns `iframes: N` when iframes exist.
+- **Multi-agent**: Each agent uses its own tab. Use `new-tab <url> --wait dom --alias <name>` for atomic tab creation + naming.
+- **Complex pages**: If `--search` errors, narrow with `--scope "main"` first or use `--filter interactive --limit 50`.
+- **Canvas apps**: `read-page` returns a hint when canvas is detected. Use `screenshot` + `js` instead.
+- **Hidden overlays (Gmail compose)**: Use `--include-hidden` or `--scope "[role='dialog']"`.
+- **Global flags**: `--tab <alias>` targets a specific tab, `--no-screenshot` skips screenshots.
+
+Most tips are also returned as contextual `hint` fields in CLI responses when relevant (e.g., REF_NOT_FOUND, canvas pages, search failures).
 
 ## Configuration
 

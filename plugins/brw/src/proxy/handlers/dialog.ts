@@ -32,7 +32,7 @@ export async function handleDialog(
 
   if (action === 'accept') {
     if (!pending) {
-      return { ok: false, error: 'No pending dialog to accept', code: 'DIALOG_NOT_FOUND' };
+      return { ok: false, error: 'No pending dialog to accept', code: 'DIALOG_NOT_FOUND', hint: 'Dialogs auto-dismiss after 5 seconds. Use "dialog check" first to verify a dialog is pending.' };
     }
     await client.Page.handleJavaScriptDialog({
       accept: true,
@@ -52,7 +52,7 @@ export async function handleDialog(
 
   if (action === 'dismiss') {
     if (!pending) {
-      return { ok: false, error: 'No pending dialog to dismiss', code: 'DIALOG_NOT_FOUND' };
+      return { ok: false, error: 'No pending dialog to dismiss', code: 'DIALOG_NOT_FOUND', hint: 'Dialogs auto-dismiss after 5 seconds. Use "dialog check" first to verify a dialog is pending.' };
     }
     await client.Page.handleJavaScriptDialog({ accept: false });
     const page = await cdp.getPageInfo(tabId);

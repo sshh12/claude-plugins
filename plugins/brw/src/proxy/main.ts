@@ -389,9 +389,11 @@ function errorResponse(err: any): ApiResponse {
   const message = err?.message || 'Unknown error';
   let code: string = ErrorCode.CDP_ERROR;
 
-  if (message.includes('not found')) code = ErrorCode.TAB_NOT_FOUND;
-  if (message.includes('Ref')) code = ErrorCode.REF_NOT_FOUND;
-  if (message.includes('Selector')) code = ErrorCode.SELECTOR_NOT_FOUND;
+  if (message.includes('not found') && !message.includes('Ref') && !message.includes('Selector')) code = ErrorCode.TAB_NOT_FOUND;
+  if (message.includes('Ref') && message.includes('not found')) code = ErrorCode.REF_NOT_FOUND;
+  if (message.includes('Selector') && message.includes('not found')) code = ErrorCode.SELECTOR_NOT_FOUND;
+  if (message.includes('Handler timeout exceeded')) code = ErrorCode.TIMEOUT;
+  if (message.includes('Could not handle dialog') || message.includes('No dialog')) code = ErrorCode.DIALOG_NOT_FOUND;
 
   return {
     ok: false,
@@ -406,7 +408,7 @@ function getErrorHint(code: string): string {
     case ErrorCode.TAB_NOT_FOUND:
       return 'Use "brw tabs" to list available tabs';
     case ErrorCode.REF_NOT_FOUND:
-      return 'Refs expire after page navigation. Run "brw read-page" to get fresh refs.';
+      return 'Refs expire after page navigation or DOM mutations (SPA re-renders). Run "brw read-page" to get fresh refs.';
     case ErrorCode.SELECTOR_NOT_FOUND:
       return 'Check the selector with "brw js document.querySelector(...)". Try "brw read-page --search <text>" to find elements.';
     case ErrorCode.URL_BLOCKED:

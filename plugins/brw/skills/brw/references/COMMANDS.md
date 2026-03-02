@@ -194,8 +194,14 @@ brw read-page [--filter all|interactive] [--search TEXT] [--ref REF] [--scope CS
 
 Output: `{"ok": true, "tree": "...", "refCount": 42}`
 
+Additional response fields:
+- `hint` — returned when page has canvas elements and tree is sparse (suggests using screenshot/js instead)
+- `iframes` — number of iframes on the page (when `--frame` is not used)
+- `searchDiagnostics` — returned when `--search` finds no matches (includes query, totalRefs, searchFields, hint)
+
+Notes:
 - Returns accessibility tree with ref IDs (e.g., `ref_1`, `ref_2`)
-- Ref IDs persist until navigation
+- Ref IDs persist until navigation or DOM mutation (SPAs re-render invalidates refs)
 - Select elements include options with selection state
 - Iframes appear as placeholders with frame index
 
@@ -225,7 +231,7 @@ cat script.js | brw js [--frame INDEX|NAME] [--tab ID]
 
 Evaluates JavaScript in the page context. Supports `await` for async expressions. Returns serialized result.
 
-Use `-` as the expression or pipe to stdin for complex/multi-line JS to avoid shell quoting issues.
+Use `-` as the expression or pipe to stdin for complex/multi-line JS to avoid shell quoting issues. **Note**: multi-line heredoc/file input requires explicit `return` for the last value (single-line expressions auto-return the last expression value).
 
 ---
 
@@ -315,10 +321,15 @@ Output: `{"ok": true, "tabs": [{"id": 1, "url": "...", "title": "..."}], "active
 ### `brw new-tab`
 
 ```bash
-brw new-tab [url]
+brw new-tab [url] [--wait dom|network|render] [--alias NAME]
 ```
 
-Output: `{"ok": true, "tabId": 2, "url": "..."}`
+| Flag | Description |
+|------|-------------|
+| `--wait` | Wait strategy before returning |
+| `--alias` | Atomically assign alias to the new tab (avoids race conditions in multi-agent setups) |
+
+Output: `{"ok": true, "tabId": 2, "url": "...", "alias": "inbox"}`
 
 ### `brw switch-tab`
 

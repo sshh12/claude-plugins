@@ -36,7 +36,7 @@ export async function handleDrag(
       returnByValue: true,
     });
     if (!result.result?.value) {
-      return { ok: false, error: `Ref ${params.fromRef} not found`, code: 'REF_NOT_FOUND' };
+      return { ok: false, error: `Ref ${params.fromRef} not found`, code: 'REF_NOT_FOUND', hint: 'Refs expire after navigation or DOM mutations. Run "brw read-page" to get fresh refs.' };
     }
     const coords = JSON.parse(result.result.value);
     startX = coords.x;
@@ -60,7 +60,7 @@ export async function handleDrag(
       returnByValue: true,
     });
     if (!result.result?.value) {
-      return { ok: false, error: `Ref ${params.toRef} not found`, code: 'REF_NOT_FOUND' };
+      return { ok: false, error: `Ref ${params.toRef} not found`, code: 'REF_NOT_FOUND', hint: 'Refs expire after navigation or DOM mutations. Run "brw read-page" to get fresh refs.' };
     }
     const coords = JSON.parse(result.result.value);
     endX = coords.x;
@@ -72,11 +72,15 @@ export async function handleDrag(
     return { ok: false, error: 'Must specify end coordinates or --to-ref', code: 'INVALID_ARGUMENT' };
   }
 
+  // Pointer/mouse event options — ensure PointerEvent fields are set for apps like Excalidraw
+  const pointerOpts = { pointerType: 'mouse' as const };
+
   // Move to start
   await client.Input.dispatchMouseEvent({
     type: 'mouseMoved',
     x: startX,
     y: startY,
+    ...pointerOpts,
   });
   await new Promise((r) => setTimeout(r, 50));
 
@@ -87,6 +91,7 @@ export async function handleDrag(
     y: startY,
     button: 'left',
     clickCount: 1,
+    ...pointerOpts,
   });
   await new Promise((r) => setTimeout(r, 50));
 
@@ -100,6 +105,8 @@ export async function handleDrag(
       type: 'mouseMoved',
       x: Math.round(x),
       y: Math.round(y),
+      button: 'left',
+      ...pointerOpts,
     });
     await new Promise((r) => setTimeout(r, 20));
   }
@@ -111,6 +118,7 @@ export async function handleDrag(
     y: endY,
     button: 'left',
     clickCount: 1,
+    ...pointerOpts,
   });
 
   await new Promise((r) => setTimeout(r, 150));

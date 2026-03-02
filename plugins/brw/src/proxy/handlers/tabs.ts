@@ -14,7 +14,7 @@ export async function handleListTabs(cdp: CDPManager): Promise<ApiResponse> {
 export async function handleNewTab(
   cdp: CDPManager,
   config: BrwConfig,
-  params: { url?: string; wait?: string; noScreenshot?: boolean }
+  params: { url?: string; wait?: string; alias?: string; noScreenshot?: boolean }
 ): Promise<ApiResponse> {
   const logger = getGlobalLogger();
   let url = params.url;
@@ -37,6 +37,13 @@ export async function handleNewTab(
   const result = await cdp.createTab(url);
   logger.info('new-tab', { tabId: result.tabId, url: url || 'about:blank' });
 
+  // Atomically assign alias if provided (avoids race with other agents)
+  let alias: string | undefined;
+  if (params.alias) {
+    cdp.nameTab(params.alias, result.tabId);
+    alias = params.alias;
+  }
+
   // If --wait is specified and a URL was provided, wait for the page to load
   if (params.wait && url) {
     const client = cdp.getClient(result.tabId);
@@ -49,13 +56,14 @@ export async function handleNewTab(
     return {
       ok: true,
       tabId: result.tabId,
-      url: result.url,
+      url: page.url || result.url,
+      alias,
       screenshot: screenshotResult.screenshot,
       page,
     };
   }
 
-  return { ok: true, tabId: result.tabId, url: result.url };
+  return { ok: true, tabId: result.tabId, url: url || result.url, alias };
 }
 
 export async function handleSwitchTab(

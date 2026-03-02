@@ -49,6 +49,8 @@ interface TabState {
   networkBodies: Map<string, { body: string; base64: boolean; mimeType: string }>;
   elementRefCounter: number;
   pendingDialog: { type: string; message: string; defaultPrompt?: string } | null;
+  /** Timer ID for auto-dismiss — cleared when dialog is manually handled */
+  dialogAutoTimer: ReturnType<typeof setTimeout> | null;
   autoDismissedDialogs: AutoDismissedDialog[];
   pendingDownload: DownloadInfo | null;
   mutex: Promise<void>;
@@ -196,6 +198,7 @@ export class CDPManager {
       networkBodies: new Map(),
       elementRefCounter: 0,
       pendingDialog: null,
+      dialogAutoTimer: null,
       autoDismissedDialogs: [],
       pendingDownload: null,
       mutex: Promise.resolve(),
@@ -319,6 +322,12 @@ export class CDPManager {
 
     // Dialog handling
     client.on('Page.javascriptDialogOpening', (params: any) => {
+      // Clear any stale auto-dismiss timer from a previous dialog
+      if (state.dialogAutoTimer) {
+        clearTimeout(state.dialogAutoTimer);
+        state.dialogAutoTimer = null;
+      }
+
       state.pendingDialog = {
         type: params.type,
         message: params.message,
@@ -326,8 +335,11 @@ export class CDPManager {
       };
 
       // Auto-dismiss after 5 seconds if not handled
-      setTimeout(async () => {
-        if (state.pendingDialog) {
+      // Store the expected message to guard against acting on a different dialog
+      const expectedMessage = params.message;
+      state.dialogAutoTimer = setTimeout(async () => {
+        state.dialogAutoTimer = null;
+        if (state.pendingDialog && state.pendingDialog.message === expectedMessage) {
           const accept = params.type === 'alert';
           const action = accept ? 'accept' : 'dismiss';
           try {
@@ -349,6 +361,11 @@ export class CDPManager {
     });
 
     client.on('Page.javascriptDialogClosed', () => {
+      // Clear auto-dismiss timer when dialog is handled manually
+      if (state.dialogAutoTimer) {
+        clearTimeout(state.dialogAutoTimer);
+        state.dialogAutoTimer = null;
+      }
       state.pendingDialog = null;
     });
 
@@ -550,8 +567,16 @@ export class CDPManager {
     if (!tabId) throw new Error('Tab ID is required');
     const resolved = this.resolveTabId(tabId);
     if (!this.tabs.has(resolved)) {
-      // Try to attach
-      await this.attachToTarget(resolved);
+      // Try to attach — if the target no longer exists, give a clear error
+      try {
+        await this.attachToTarget(resolved);
+      } catch (err: any) {
+        // Clean up stale alias if it pointed to this tab
+        for (const [alias, tid] of this.tabAliases) {
+          if (tid === resolved) { this.tabAliases.delete(alias); break; }
+        }
+        throw new Error(`Tab ${tabId} not found. Use "brw tabs" to see available tabs.`);
+      }
     }
     try {
       await CDP.Activate({ port: this.cdpPort, id: resolved });

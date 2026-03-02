@@ -282,11 +282,13 @@ program
   .allowUnknownOption()
   .description('Open a URL in a new tab')
   .option('--wait <strategy>', 'Wait strategy: none, dom, network, render')
+  .option('--alias <name>', 'Assign alias to the new tab atomically (avoids race conditions)')
   .option('--no-screenshot', 'Skip auto-screenshot (with --wait)')
   .action(async (url, opts) => {
     await run('POST', '/api/tabs/new', {
       url,
       wait: opts.wait,
+      alias: opts.alias,
       noScreenshot: opts.screenshot === false,
     });
   });
