@@ -107,12 +107,14 @@ async function setupInitialTab(cdpMgr: CDPManager, cfg: BrwConfig): Promise<void
     const finalClient = cdpMgr.getClient(finalTabId);
 
     await finalClient.Emulation.clearDeviceMetricsOverride();
-    await finalClient.Emulation.setDeviceMetricsOverride({
-      width: cfg.windowWidth,
-      height: cfg.windowHeight,
-      deviceScaleFactor: 1,
-      mobile: false,
-    });
+    if (cfg.headless) {
+      await finalClient.Emulation.setDeviceMetricsOverride({
+        width: cfg.windowWidth,
+        height: cfg.windowHeight,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+    }
 
     // Reset scroll position — NTP can leave a non-zero scroll offset
     await finalClient.Runtime.evaluate({
@@ -163,7 +165,7 @@ async function relaunchChrome(): Promise<void> {
     }
 
     const downloadDir = join(config.screenshotDir, 'downloads');
-    cdp = new CDPManager(config.cdpPort, downloadDir);
+    cdp = new CDPManager(config.cdpPort, downloadDir, config.headless);
     cdp.setViewport(config.windowWidth, config.windowHeight);
     await cdp.connect();
 
@@ -518,7 +520,7 @@ async function main() {
 
   // Connect to Chrome via CDP
   logger.info('Connecting to Chrome CDP...');
-  cdp = new CDPManager(config.cdpPort, downloadDir);
+  cdp = new CDPManager(config.cdpPort, downloadDir, config.headless);
   cdp.setViewport(config.windowWidth, config.windowHeight);
   await cdp.connect();
   logger.info('Connected to Chrome CDP');

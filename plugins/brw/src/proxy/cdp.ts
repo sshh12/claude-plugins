@@ -73,9 +73,12 @@ export class CDPManager {
   private lastActiveUrl = '';
   private tabAliases = new Map<string, string>(); // alias → tabId
 
-  constructor(cdpPort: number, downloadDir?: string) {
+  private headless: boolean;
+
+  constructor(cdpPort: number, downloadDir?: string, headless: boolean = false) {
     this.cdpPort = cdpPort;
     this.downloadDir = downloadDir || '/tmp/brw-screenshots/downloads';
+    this.headless = headless;
   }
 
   /**
@@ -395,8 +398,9 @@ export class CDPManager {
 
     this.tabs.set(targetId, state);
 
-    // Apply viewport dimensions to every tab
-    if (this.viewportWidth > 0 && this.viewportHeight > 0) {
+    // Apply viewport dimensions to every tab (headless only — headed mode uses
+    // the real window size, so emulation overrides would create whitespace)
+    if (this.headless && this.viewportWidth > 0 && this.viewportHeight > 0) {
       try {
         await client.Emulation.setDeviceMetricsOverride({
           width: this.viewportWidth,
