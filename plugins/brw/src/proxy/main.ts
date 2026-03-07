@@ -35,6 +35,8 @@ import { handleIntercept } from './handlers/intercept.js';
 import { handlePdf } from './handlers/pdf.js';
 import { handleEmulate } from './handlers/emulate.js';
 import { handlePerf } from './handlers/perf.js';
+import { handleArrange } from './handlers/arrange.js';
+import { handleWindowBounds } from './handlers/window-bounds.js';
 import { handleProfileList, handleProfileShow } from './handlers/profile.js';
 import { handleRunAction } from './handlers/run-action.js';
 import { createLogger, setGlobalLogger, readLogTail, audit, setAuditLog } from './logger.js';
@@ -638,6 +640,8 @@ async function main() {
   server.post('/api/gif/clear', readHandler('gif-clear', async (body) => handleGifClear(cdp, body)));
   server.post('/api/profiles', readHandler('profiles', async (body) => handleProfileList(body)));
   server.post('/api/profiles/show', readHandler('profiles-show', async (body) => handleProfileShow(body)));
+  server.post('/api/arrange', readHandler('arrange', async (body) => handleArrange(cdp, body)));
+  server.post('/api/window-bounds', readHandler('window-bounds', async (body) => handleWindowBounds(cdp, body)));
 
   // Start the server
   writePidFile(process.pid, config.proxyPort, chromeProcess?.pid);

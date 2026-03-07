@@ -11,7 +11,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.7.1')
+  .version('0.7.2')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--plain', 'Output as plain text instead of JSON')
@@ -321,12 +321,14 @@ program
   .description('Open a URL in a new tab')
   .option('--wait <strategy>', 'Wait strategy: none, dom, network, render')
   .option('--alias <name>', 'Assign alias to the new tab atomically (avoids race conditions)')
+  .option('--window', 'Open in a new Chrome window instead of a tab')
   .option('--no-screenshot', 'Skip auto-screenshot (with --wait)')
   .action(async (url, opts) => {
     await run('POST', '/api/tabs/new', {
       url,
       wait: opts.wait,
       alias: opts.alias,
+      window: opts.window,
       noScreenshot: opts.screenshot === false,
     });
   });
@@ -872,6 +874,42 @@ gifCmd
   .description('Discard recorded frames')
   .action(async () => {
     await run('POST', '/api/gif/clear', {});
+  });
+
+// ---- arrange ----
+
+program
+  .command('arrange')
+  .allowUnknownOption()
+  .description('Tile all browser windows in a grid')
+  .option('--screen <WxH>', 'Override screen dimensions (e.g. 1920x1080)')
+  .option('--padding <px>', 'Gap between windows in pixels', '0')
+  .action(async (opts) => {
+    await run('POST', '/api/arrange', {
+      screen: opts.screen,
+      padding: parseInt(opts.padding, 10),
+    });
+  });
+
+// ---- window-bounds ----
+
+program
+  .command('window-bounds')
+  .allowUnknownOption()
+  .description('Get or set window position and size')
+  .option('--left <n>', 'Window left position')
+  .option('--top <n>', 'Window top position')
+  .option('--width <n>', 'Window width')
+  .option('--height <n>', 'Window height')
+  .option('--state <state>', 'Window state: normal, minimized, maximized, fullscreen')
+  .action(async (opts) => {
+    await run('POST', '/api/window-bounds', {
+      left: opts.left !== undefined ? parseInt(opts.left, 10) : undefined,
+      top: opts.top !== undefined ? parseInt(opts.top, 10) : undefined,
+      width: opts.width !== undefined ? parseInt(opts.width, 10) : undefined,
+      height: opts.height !== undefined ? parseInt(opts.height, 10) : undefined,
+      state: opts.state,
+    });
   });
 
 // ---- quick ----

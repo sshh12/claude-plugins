@@ -548,7 +548,22 @@ export class CDPManager {
     }));
   }
 
-  async createTab(url?: string): Promise<{ tabId: string; url: string }> {
+  async createTab(url?: string, newWindow?: boolean): Promise<{ tabId: string; url: string }> {
+    if (newWindow) {
+      // Use Target.createTarget via an existing CDP client (Target domain is browser-scoped)
+      const anyClient = this.tabs.values().next().value?.client;
+      if (!anyClient) throw new Error('No existing tab to create window from');
+      const result = await anyClient.Target.createTarget({
+        url: url || 'about:blank',
+        newWindow: true,
+      });
+      const targetId = result.targetId;
+      await new Promise((r) => setTimeout(r, 200));
+      const state = await this.attachToTarget(targetId);
+      this.activeTabId = targetId;
+      this.lastActiveUrl = state.url || url || 'about:blank';
+      return { tabId: targetId, url: state.url || url || 'about:blank' };
+    }
     const target = await CDP.New({
       port: this.cdpPort,
       url: url || 'about:blank',

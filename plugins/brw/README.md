@@ -115,7 +115,3 @@ Claude Agent ──HTTP──→ Proxy Server ──CDP/WS──→ Chrome
 - **Proxy server**: Auto-launches on first CLI call. Manages Chrome lifecycle, CDP connections, tab state, and per-tab mutexes for safe concurrent access.
 - **CLI (`brw`)**: Stateless — each call sends an HTTP request to the proxy and prints the result. Mutation commands auto-return a screenshot.
 - **Multi-agent**: Multiple agents share one Chrome/proxy instance, isolated by tabs.
-
-## Full specification
-
-See [SPEC.md](SPEC.md) for the complete technical specification including all CLI commands, REST API, implementation details, test plans, and phased implementation roadmap.

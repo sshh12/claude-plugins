@@ -258,6 +258,9 @@ Dialogs auto-dismiss after 5 seconds if not handled explicitly.
 ### Other
 
 ```bash
+/tmp/brw new-tab <url> --window             # Open in separate Chrome window
+/tmp/brw arrange                           # Tile all windows in a grid
+/tmp/brw window-bounds                     # Get/set window position and size
 /tmp/brw resize 800 600                    # Resize viewport
 /tmp/brw pdf --output report.pdf           # Save page as PDF
 /tmp/brw emulate --device "iPhone 15"      # Device emulation
