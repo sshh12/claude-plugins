@@ -2,6 +2,12 @@
 
 Browser automation plugin for Claude Code. Control a real Chrome browser via CLI commands — click, type, navigate, screenshot, read pages, and more.
 
+
+
+https://github.com/user-attachments/assets/4f3ae6e4-f53e-4c57-9cea-48957bb82cf9
+
+
+
 ## Why brw?
 
 - **Open and transparent**: Claude for Chrome is a black box requiring a subscription. brw is open source with full visibility into what's happening.
