@@ -2,6 +2,12 @@
 
 Browser automation plugin for Claude Code. Control a real Chrome browser via CLI commands — click, type, navigate, screenshot, read pages, and more.
 
+## Why brw?
+
+- **Open and transparent**: Claude for Chrome is a black box requiring a subscription. brw is open source with full visibility into what's happening.
+- **Agent-friendly architecture**: Playwright MCP and Chrome DevTools MCP servers weren't designed for parallel agent workflows — they struggle with multiple agents sharing one browser. brw uses a proxy with per-tab mutexes, stateless CLI commands, and structured JSON output built for concurrent agent access.
+- **Lightweight**: No heavy MCP server overhead. A single proxy manages Chrome, and each CLI call is a simple HTTP request.
+
 ## What it does
 
 Gives Claude Code agents the ability to interact with web browsers through a CLI tool (`brw`) backed by Chrome DevTools Protocol. A proxy server manages the Chrome instance and handles concurrent access from multiple agents.

@@ -162,6 +162,68 @@ export async function cleanupOrphanedChrome(config: BrwConfig): Promise<void> {
   removePidFile();
 }
 
+export function findDebugBrowserProcesses(): Array<{ pid: number; port: number; binary: string }> {
+  try {
+    const output = execSync('ps -eo pid,args', { encoding: 'utf-8', timeout: 5000 });
+    const results: Array<{ pid: number; port: number; binary: string }> = [];
+    for (const line of output.split('\n')) {
+      if (!line.includes('--remote-debugging-port')) continue;
+      if (line.includes('--type=')) continue; // skip child processes (renderer, gpu, utility)
+      const pidMatch = line.trim().match(/^(\d+)\s/);
+      if (!pidMatch) continue;
+      const pid = parseInt(pidMatch[1], 10);
+      if (pid === process.pid) continue;
+      const portMatch = line.match(/--remote-debugging-port=(\d+)/);
+      const port = portMatch ? parseInt(portMatch[1], 10) : 0;
+      const argsStart = line.trim().replace(/^\d+\s+/, '');
+      const binary = argsStart.split(/\s/)[0].split('/').pop() || 'unknown';
+      results.push({ pid, port, binary });
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+export async function killDebugBrowserProcesses(): Promise<{ killed: Array<{ pid: number; port: number; binary: string }>; failed: Array<{ pid: number; error: string }> }> {
+  const procs = findDebugBrowserProcesses();
+  const killed: Array<{ pid: number; port: number; binary: string }> = [];
+  const failed: Array<{ pid: number; error: string }> = [];
+
+  for (const proc of procs) {
+    try {
+      process.kill(proc.pid, 'SIGTERM');
+    } catch (err: any) {
+      if (err.code === 'ESRCH') {
+        killed.push(proc); // already dead
+      } else {
+        failed.push({ pid: proc.pid, error: err.code || err.message });
+      }
+      continue;
+    }
+
+    // Wait up to 2s for graceful exit
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline && isProcessRunning(proc.pid)) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    if (isProcessRunning(proc.pid)) {
+      try {
+        process.kill(proc.pid, 'SIGKILL');
+      } catch (err: any) {
+        if (err.code !== 'ESRCH') {
+          failed.push({ pid: proc.pid, error: err.code || err.message });
+          continue;
+        }
+      }
+    }
+    killed.push(proc);
+  }
+
+  return { killed, failed };
+}
+
 export async function launchChrome(config: BrwConfig): Promise<ChildProcess> {
   const chromePath = config.chromePath || detectChromePath();
   if (!chromePath) {

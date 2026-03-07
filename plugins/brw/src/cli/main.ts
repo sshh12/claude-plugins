@@ -1,4 +1,6 @@
 import { Command } from 'commander';
+import { existsSync, unlinkSync } from 'fs';
+import { join } from 'path';
 import { getConfig } from '../shared/config.js';
 import { ExitCode } from '../shared/types.js';
 import { proxyRequest, ensureProxy, formatOutput } from './http.js';
@@ -9,7 +11,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.6.4')
+  .version('0.6.6')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--plain', 'Output as plain text instead of JSON')
@@ -982,8 +984,44 @@ serverCmd
   .description('Start the proxy server')
   .option('--chrome-data-dir <path>', 'Chrome user data directory')
   .option('--headless', 'Run Chrome in headless mode')
+  .option('--clean', 'Kill all debug-mode browsers before starting')
   .action(async (opts) => {
     const globals = getGlobalOpts();
+
+    if (opts.clean) {
+      const { killDebugBrowserProcesses, removePidFile, isProcessRunning, readPidFile } = await import('../proxy/chrome.js');
+      const { resolveConfig } = await import('../shared/config.js');
+      const resolved = resolveConfig();
+
+      // Stop proxy if running
+      try {
+        await proxyRequest('POST', '/shutdown', {}, globals.port, 5, globals.debug);
+      } catch { /* may not be running */ }
+
+      // Wait for proxy process to exit
+      const pidData = readPidFile();
+      if (pidData?.pid) {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline && isProcessRunning(pidData.pid)) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        if (isProcessRunning(pidData.pid)) {
+          try { process.kill(pidData.pid, 'SIGKILL'); } catch { /* ignore */ }
+        }
+      }
+
+      const result = await killDebugBrowserProcesses();
+      removePidFile();
+
+      // Remove stale SingletonLock
+      const lockPath = join(resolved.chromeDataDir.value, 'SingletonLock');
+      try { if (existsSync(lockPath)) unlinkSync(lockPath); } catch { /* ignore */ }
+
+      if (globals.debug) {
+        console.error(`[brw] Clean: killed ${result.killed.length}, failed ${result.failed.length}`);
+      }
+    }
+
     const { startProxy } = await import('./proxy-launcher.js');
     try {
       const result = await startProxy(globals.port, opts.chromeDataDir, opts.headless, globals.debug);
@@ -1071,6 +1109,52 @@ serverCmd
     } catch {
       process.stdout.write(formatOutput({ ok: true, restarted: true }, globals.text) + '\n');
     }
+  });
+
+serverCmd
+  .command('clean')
+  .description('Kill all debug-mode browsers and clean up state for a fresh start')
+  .action(async () => {
+    const globals = getGlobalOpts();
+    const { killDebugBrowserProcesses, removePidFile, isProcessRunning, readPidFile } = await import('../proxy/chrome.js');
+    const { resolveConfig } = await import('../shared/config.js');
+    const resolved = resolveConfig();
+
+    // Stop proxy if running
+    let proxyStopped = false;
+    try {
+      await proxyRequest('POST', '/shutdown', {}, globals.port, 5, globals.debug);
+      proxyStopped = true;
+    } catch { /* may not be running */ }
+
+    // Wait for proxy process to exit
+    const pidData = readPidFile();
+    if (pidData?.pid) {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && isProcessRunning(pidData.pid)) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (isProcessRunning(pidData.pid)) {
+        try { process.kill(pidData.pid, 'SIGKILL'); } catch { /* ignore */ }
+      }
+      proxyStopped = true;
+    }
+
+    // Kill all debug-mode browsers
+    const result = await killDebugBrowserProcesses();
+
+    // Clean up state
+    removePidFile();
+    const lockPath = join(resolved.chromeDataDir.value, 'SingletonLock');
+    try { if (existsSync(lockPath)) unlinkSync(lockPath); } catch { /* ignore */ }
+
+    process.stdout.write(formatOutput({
+      ok: true,
+      proxyStopped,
+      killed: result.killed,
+      failed: result.failed,
+      count: result.killed.length,
+    }, globals.text) + '\n');
   });
 
 serverCmd

@@ -1,5 +1,11 @@
 # claude-plugins
 
+[![Blog](https://img.shields.io/badge/Blog-blog.sshh.io-blue?style=flat-square&logo=hashnode)](https://blog.sshh.io/)
+[![GitHub](https://img.shields.io/badge/GitHub-sshh12-181717?style=flat-square&logo=github)](https://github.com/sshh12)
+[![X](https://img.shields.io/badge/X-@ShrivuShankar-000000?style=flat-square&logo=x)](https://x.com/ShrivuShankar)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-shrivushankar-0A66C2?style=flat-square&logo=linkedin)](https://linkedin.com/in/shrivushankar)
+[![Chat](https://img.shields.io/badge/Chat-Coffee%20Chat-orange?style=flat-square&logo=googlechat)](https://sshh.io/coffee-chat)
+
 Shrivu's random Claude Code plugins.
 
 ## Install
@@ -9,10 +15,21 @@ Shrivu's random Claude Code plugins.
 /plugin install <plugin-name>@shrivu-plugins
 ```
 
-## Follow / Contact
+## Plugins
 
-[![Blog](https://img.shields.io/badge/Blog-blog.sshh.io-blue?style=flat-square&logo=hashnode)](https://blog.sshh.io/)
-[![GitHub](https://img.shields.io/badge/GitHub-sshh12-181717?style=flat-square&logo=github)](https://github.com/sshh12)
-[![X](https://img.shields.io/badge/X-@ShrivuShankar-000000?style=flat-square&logo=x)](https://x.com/ShrivuShankar)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-shrivushankar-0A66C2?style=flat-square&logo=linkedin)](https://linkedin.com/in/shrivushankar)
-[![Chat](https://img.shields.io/badge/Chat-Coffee%20Chat-orange?style=flat-square&logo=googlechat)](https://sshh.io/coffee-chat)
+### brw
+
+Full browser automation for Claude Code via Chrome DevTools Protocol. Navigate, click, type, screenshot, record GIFs, intercept network requests, and more — all from your terminal.
+
+**Why brw?** Claude for Chrome is a black box that requires a subscription. Playwright MCP and Chrome DevTools MCP servers don't handle highly parallel agent workflows well — they weren't designed for multiple agents sharing one browser concurrently. brw is a lightweight proxy built for agent-first usage: stateless CLI, per-tab mutexes, and JSON output that agents can parse directly.
+
+```
+/plugin install brw@shrivu-plugins
+```
+
+Then use `/brw` to start browsing. The proxy auto-starts on first command and stays running. Key capabilities:
+- **Navigate & interact**: click, type, scroll, drag, keyboard shortcuts
+- **Read pages**: screenshots, DOM extraction, console logs, network traffic
+- **Record**: GIF recordings of multi-step workflows
+- **Multi-tab**: open, switch, and manage browser tabs
+- **Security**: configurable URL blocking, protocol restrictions, cookie scoping

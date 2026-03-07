@@ -541,15 +541,18 @@ brw gif clear [--tab ID]
 ## Server Management
 
 ```bash
-brw server start [--port PORT] [--chrome-data-dir PATH] [--headless]
+brw server start [--port PORT] [--chrome-data-dir PATH] [--headless] [--clean]
 brw server stop [--port PORT]
 brw server restart [--port PORT]
 brw server status [--port PORT]
+brw server clean [--port PORT]
 ```
 
+- `server start --clean` kills all debug-mode browsers and cleans up state before starting
 - `server stop` kills both the proxy and Chrome (all tabs lost)
 - `server restart` restarts only the proxy, keeping Chrome alive (tabs preserved)
 - `server status` returns runtime info plus all resolved security config (blockedProtocols, blockedUrls, allowedUrls, disabledCommands, cookieScope, auditLog, etc.)
+- `server clean` kills all browsers running with `--remote-debugging-port`, stops the proxy, and removes stale state (PID file, SingletonLock). Use for a clean slate when debug browsers from previous sessions block the CDP port
 
 ### `brw log`
 

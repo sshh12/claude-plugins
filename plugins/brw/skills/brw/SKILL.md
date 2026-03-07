@@ -29,8 +29,10 @@ The proxy is a **persistent daemon** — it starts automatically on first comman
 ```bash
 /tmp/brw server status                     # Check if proxy is running
 /tmp/brw server start                      # Manually start (usually not needed)
+/tmp/brw server start --clean              # Kill all debug-mode browsers, then start fresh
 /tmp/brw server stop                       # Stop proxy and Chrome
 /tmp/brw server restart                    # Restart proxy only (keeps Chrome and tabs alive)
+/tmp/brw server clean                      # Kill all debug-mode browsers and clean up state
 ```
 
 If Chrome crashes, the proxy auto-relaunches on the next command. Sessions, cookies, and tabs survive proxy restarts because the proxy reconnects to an existing Chrome if one is already running on the CDP port. Use `server restart` to recover from an unresponsive proxy without losing tabs.
