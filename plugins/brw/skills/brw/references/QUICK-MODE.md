@@ -27,14 +27,16 @@ Commands are separated by newlines. One command per line.
 | `N` | Navigate | `N <url>` | `N https://google.com` |
 | `N back` | Navigate back | `N back` | `N back` |
 | `J` | Execute JavaScript | `J <expression>` | `J document.title` |
-| `W` | Wait (page settle) | `W` | `W` |
+| `W` | Wait (fixed pause) | `W [seconds]` | `W` (0.5s), `W 3` (3s) |
 | `ST` | Switch tab | `ST <tabId>` | `ST 3` |
 | `NT` | New tab | `NT <url>` | `NT https://example.com` |
 | `LT` | List tabs | `LT` | `LT` |
 | `CR` | Click ref | `CR <ref>` | `CR ref_5` |
 | `FR` | Form-input ref | `FR <ref> <value>` | `FR ref_3 hello` |
+| `CT` | Click by text | `CT <text>` | `CT Submit` |
+| `FT` | Form-input by label | `FT <label> <value>` | `FT Email test@example.com` |
 | `R` | Read page | `R [--filter interactive] [--search TEXT]` | `R --search Submit` |
-| `WF` | Wait-for | `WF <flags>` | `WF --text "Success"` |
+| `WF` | Wait-for | `WF <flags>` | `WF --text "Success"`, `WF --url */step-2*` |
 
 ## Output
 
@@ -49,6 +51,8 @@ Commands are separated by newlines. One command per line.
   ]
 }
 ```
+
+For labels with spaces, quote them: `FT "Full name" John Doe`
 
 - `LT`, `J`, `R`, `WF`, and `NT` produce intermediate results (returned in the `results` array)
 - A single screenshot is taken after the last command
@@ -111,6 +115,49 @@ R --search status"
 brw quick "S down 5 640 400
 Z 0 0 640 400"
 ```
+
+### Cross-page workflow (wizard / multi-step form)
+
+Use `CT` to click by text, then `WF` to wait for the next page to load:
+
+```bash
+brw quick "FT Email test@example.com
+CT Continue
+WF --text 'Step 2 of 5'
+FT Phone 555-1234
+CT Continue
+WF --text 'Step 3 of 5'"
+```
+
+For page transitions with URL changes, use `WF --url`:
+
+```bash
+brw quick "CT Save and Continue
+WF --url */step-2*
+FT Name John Doe
+CT Save and Continue
+WF --url */step-3*"
+```
+
+For JS-heavy forms, JS submission is faster than clicking (skips coordinate resolution):
+
+```bash
+brw quick "FT Email test@example.com
+J document.querySelector('form').submit()
+WF --url */step-2*"
+```
+
+### Configurable wait duration
+
+`W` accepts an optional duration in seconds (default 0.5s, max 30s):
+
+```bash
+brw quick "CT Submit
+W 3
+R --filter interactive"
+```
+
+Use `W <seconds>` for fixed delays. Use `WF` for condition-based waits (more reliable — exits early when condition is met).
 
 ## When to Use Quick Mode
 

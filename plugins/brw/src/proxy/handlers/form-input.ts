@@ -1,6 +1,7 @@
 import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
 import { handleScreenshot } from './screenshot.js';
+import { resolveTargetElement } from './resolve-target.js';
 
 export async function handleFormInput(
   cdp: CDPManager,
@@ -8,6 +9,9 @@ export async function handleFormInput(
   params: {
     ref?: string;
     selector?: string;
+    text?: string;
+    label?: string;
+    wait?: number;
     value: string;
     tab?: string;
     frame?: string;
@@ -17,13 +21,19 @@ export async function handleFormInput(
   const tabId = params.tab;
   const client = cdp.getClient(tabId);
 
-  if (!params.ref && !params.selector) {
-    return { ok: false, error: 'Must specify --ref or --selector', code: 'INVALID_ARGUMENT' };
+  // Resolve element expression — supports ref, selector, text, label
+  let resolveExpr: string;
+  if (params.ref || params.selector || params.text || params.label) {
+    const resolved = await resolveTargetElement(cdp, {
+      ref: params.ref, selector: params.selector,
+      text: params.text, label: params.label,
+      tab: tabId, wait: params.wait, frame: params.frame,
+    });
+    if (!resolved.ok) return resolved;
+    resolveExpr = resolved.resolveExpr!;
+  } else {
+    return { ok: false, error: 'Must specify --ref, --selector, --text, or --label', code: 'INVALID_ARGUMENT' };
   }
-
-  const resolveExpr = params.ref
-    ? `window.__brwElementMap?.get(${JSON.stringify(params.ref)})?.deref()`
-    : `document.querySelector(${JSON.stringify(params.selector)})`;
 
   // Build evaluate options, adding frame context if --frame is specified
   const evalOptions: any = {
@@ -94,11 +104,11 @@ export async function handleFormInput(
 
   const data = JSON.parse(result.result?.value || '{}');
   if (data.error === 'not_found') {
-    const target = params.ref || params.selector;
+    const target = params.ref || params.selector || params.text || params.label;
     return {
       ok: false,
       error: `Element ${target} not found`,
-      code: params.ref ? 'REF_NOT_FOUND' : 'SELECTOR_NOT_FOUND',
+      code: params.ref ? 'REF_NOT_FOUND' : params.selector ? 'SELECTOR_NOT_FOUND' : params.text ? 'TEXT_NOT_FOUND' : 'LABEL_NOT_FOUND',
     };
   }
 

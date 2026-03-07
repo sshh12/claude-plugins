@@ -60,7 +60,7 @@ function isValidCommand(cmd: string): boolean {
   return [
     'C', 'RC', 'DC', 'TC', 'H', 'T', 'K', 'S', 'D', 'Z',
     'N', 'J', 'W', 'ST', 'NT', 'LT',
-    'CR', 'FR', 'R', 'WF',
+    'CR', 'FR', 'R', 'WF', 'CT', 'FT',
   ].includes(cmd);
 }
 
@@ -258,8 +258,8 @@ export async function handleQuick(
         }
 
         case 'W': {
-          // Wait for page to settle (short pause + check network)
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          const ms = args ? Math.min(Math.max(parseFloat(args) || 0.5, 0), 30) * 1000 : 500;
+          await new Promise((resolve) => setTimeout(resolve, ms));
           break;
         }
 
@@ -317,6 +317,40 @@ export async function handleQuick(
           break;
         }
 
+        case 'CT': {
+          if (!args) {
+            return { ok: false, error: 'CT requires text argument', code: 'INVALID_ARGUMENT' };
+          }
+          const ctResult = await handleClick(cdp, config, { tab: tabId, text: args.trim(), noScreenshot: true });
+          if (!ctResult.ok) return ctResult;
+          break;
+        }
+
+        case 'FT': {
+          if (!args) {
+            return { ok: false, error: 'FT requires label and value', code: 'INVALID_ARGUMENT' };
+          }
+          let ftLabel: string, ftValue: string;
+          if (args.startsWith('"')) {
+            const close = args.indexOf('"', 1);
+            if (close === -1) {
+              return { ok: false, error: 'FT: unterminated quote', code: 'INVALID_ARGUMENT' };
+            }
+            ftLabel = args.substring(1, close);
+            ftValue = args.substring(close + 1).trim();
+          } else {
+            const sp = args.indexOf(' ');
+            if (sp === -1) {
+              return { ok: false, error: 'FT requires label and value', code: 'INVALID_ARGUMENT' };
+            }
+            ftLabel = args.substring(0, sp);
+            ftValue = args.substring(sp + 1).trim();
+          }
+          const ftResult = await handleFormInput(cdp, config, { tab: tabId, label: ftLabel, value: ftValue, noScreenshot: true });
+          if (!ftResult.ok) return ftResult;
+          break;
+        }
+
         case 'R': {
           const rParams: Record<string, unknown> = { tab: tabId };
           // Parse --search, --filter, --scope, --limit flags
@@ -336,7 +370,7 @@ export async function handleQuick(
 
         case 'WF': {
           if (!args) {
-            return { ok: false, error: 'WF requires a condition flag (--selector, --text, --js)', code: 'INVALID_ARGUMENT' };
+            return { ok: false, error: 'WF requires a condition flag (--selector, --text, --url, --js, --network-idle)', code: 'INVALID_ARGUMENT' };
           }
           const wfParams: Record<string, unknown> = { tab: tabId, noScreenshot: true };
           const selectorMatch = args.match(/--selector\s+(\S+)/);
@@ -353,10 +387,17 @@ export async function handleQuick(
             const jsMatch2 = args.match(/--js\s+(\S+)/);
             if (jsMatch2) wfParams.js = jsMatch2[1];
           }
+          const urlMatch = args.match(/--url\s+"([^"]+)"/);
+          if (urlMatch) wfParams.url = urlMatch[1];
+          else {
+            const urlMatch2 = args.match(/--url\s+(\S+)/);
+            if (urlMatch2) wfParams.url = urlMatch2[1];
+          }
+          if (args.includes('--network-idle')) wfParams.networkIdle = true;
           const timeoutMatch = args.match(/--timeout\s+(\d+)/);
           if (timeoutMatch) wfParams.timeout = parseInt(timeoutMatch[1], 10);
           const wfResult = await handleWaitFor(cdp, config, wfParams as any);
-          results.push({ command: 'WF', matched: wfResult.ok });
+          results.push({ command: 'WF', matched: (wfResult as any).matched ?? wfResult.ok });
           break;
         }
 

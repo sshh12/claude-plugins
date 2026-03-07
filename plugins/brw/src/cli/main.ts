@@ -11,13 +11,19 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.6.6')
+  .version('0.7.1')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--plain', 'Output as plain text instead of JSON')
   .option('--http-timeout <seconds>', 'CLI request timeout', '30')
   .option('--debug', 'Verbose logging to stderr')
   .option('--port <port>', 'Proxy server port');
+
+function parseWait(val: unknown): number | undefined {
+  if (val === undefined) return undefined;
+  if (val === true) return 10; // --wait with no value
+  return parseInt(String(val), 10) || 10;
+}
 
 function getPort(): number {
   const opts = program.opts();
@@ -107,6 +113,9 @@ program
   .description('Click at coordinates or element')
   .option('--ref <ref>', 'Click element by ref ID')
   .option('--selector <css>', 'Click element by CSS selector')
+  .option('--text <text>', 'Click element by visible text')
+  .option('--label <label>', 'Click form input by label')
+  .option('--wait [timeout]', 'Wait for element to appear (default 10s, max 30s)')
   .option('--right', 'Right click')
   .option('--double', 'Double click')
   .option('--triple', 'Triple click')
@@ -116,6 +125,9 @@ program
     const body: Record<string, unknown> = {
       ref: opts.ref,
       selector: opts.selector,
+      text: opts.text,
+      label: opts.label,
+      wait: parseWait(opts.wait),
       right: opts.right,
       double: opts.double,
       triple: opts.triple,
@@ -137,11 +149,17 @@ program
   .description('Hover at coordinates or element')
   .option('--ref <ref>', 'Hover element by ref ID')
   .option('--selector <css>', 'Hover element by CSS selector')
+  .option('--text <text>', 'Hover element by visible text')
+  .option('--label <label>', 'Hover form input by label')
+  .option('--wait [timeout]', 'Wait for element to appear (default 10s, max 30s)')
   .option('--no-screenshot', 'Skip auto-screenshot')
   .action(async (x, y, opts) => {
     const body: Record<string, unknown> = {
       ref: opts.ref,
       selector: opts.selector,
+      text: opts.text,
+      label: opts.label,
+      wait: parseWait(opts.wait),
       noScreenshot: opts.screenshot === false,
     };
     if (x !== undefined && y !== undefined) {
@@ -157,11 +175,21 @@ program
   .command('type <text>')
   .allowUnknownOption()
   .description('Type text into the focused element')
+  .option('--ref <ref>', 'Focus element by ref before typing')
+  .option('--selector <css>', 'Focus element by CSS selector before typing')
+  .option('--text <target>', 'Focus element by visible text before typing')
+  .option('--label <label>', 'Focus form input by label before typing')
+  .option('--wait [timeout]', 'Wait for element to appear')
   .option('--clear', 'Clear field before typing')
   .option('--no-screenshot', 'Skip auto-screenshot')
   .action(async (text, opts) => {
     await run('POST', '/api/type', {
       text,
+      ref: opts.ref,
+      selector: opts.selector,
+      targetText: opts.text,
+      targetLabel: opts.label,
+      wait: parseWait(opts.wait),
       clear: opts.clear,
       noScreenshot: opts.screenshot === false,
     });
@@ -253,11 +281,19 @@ program
   .description('Drag from one point to another')
   .option('--from-ref <ref>', 'Start element ref ID')
   .option('--to-ref <ref>', 'End element ref ID')
+  .option('--from-text <text>', 'Start element by visible text')
+  .option('--to-text <text>', 'End element by visible text')
+  .option('--from-label <label>', 'Start element by label')
+  .option('--to-label <label>', 'End element by label')
   .option('--no-screenshot', 'Skip auto-screenshot')
   .action(async (x1, y1, x2, y2, opts) => {
     const body: Record<string, unknown> = {
       fromRef: opts.fromRef,
       toRef: opts.toRef,
+      fromText: opts.fromText,
+      toText: opts.toText,
+      fromLabel: opts.fromLabel,
+      toLabel: opts.toLabel,
       noScreenshot: opts.screenshot === false,
     };
     if (x1 !== undefined) body.x1 = parseInt(x1, 10);
@@ -421,12 +457,18 @@ program
   .description('Set a form element value')
   .option('--ref <ref>', 'Element ref ID')
   .option('--selector <css>', 'CSS selector')
+  .option('--text <text>', 'Find element by visible text')
+  .option('--label <label>', 'Find form input by label')
+  .option('--wait [timeout]', 'Wait for element to appear')
   .requiredOption('--value <value>', 'Value to set')
   .option('--no-screenshot', 'Skip auto-screenshot')
   .action(async (opts) => {
     await run('POST', '/api/form-input', {
       ref: opts.ref,
       selector: opts.selector,
+      text: opts.text,
+      label: opts.label,
+      wait: parseWait(opts.wait),
       value: opts.value,
       noScreenshot: opts.screenshot === false,
     });

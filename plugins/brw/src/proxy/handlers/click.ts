@@ -1,6 +1,7 @@
 import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
 import { handleScreenshot } from './screenshot.js';
+import { resolveTargetCoords } from './resolve-target.js';
 
 export async function handleClick(
   cdp: CDPManager,
@@ -10,6 +11,9 @@ export async function handleClick(
     y?: number;
     ref?: string;
     selector?: string;
+    text?: string;
+    label?: string;
+    wait?: number;
     tab?: string;
     right?: boolean;
     double?: boolean;
@@ -21,53 +25,13 @@ export async function handleClick(
   const tabId = params.tab;
   const client = cdp.getClient(tabId);
 
-  let x: number;
-  let y: number;
-
-  // Resolve coordinates from ref
-  if (params.ref) {
-    const result = await client.Runtime.evaluate({
-      expression: `(function() {
-        const el = window.__brwElementMap?.get(${JSON.stringify(params.ref)})?.deref();
-        if (!el) return null;
-        const rect = el.getBoundingClientRect();
-        return JSON.stringify({x: rect.x + rect.width / 2, y: rect.y + rect.height / 2});
-      })()`,
-      returnByValue: true,
-    });
-    if (!result.result?.value) {
-      return { ok: false, error: `Ref ${params.ref} not found`, code: 'REF_NOT_FOUND', hint: 'Refs expire after navigation or DOM mutations. Run "brw read-page" to get fresh refs.' };
-    }
-    const coords = JSON.parse(result.result.value);
-    x = coords.x;
-    y = coords.y;
-  } else if (params.selector) {
-    // Resolve coordinates from CSS selector
-    const result = await client.Runtime.evaluate({
-      expression: `(function() {
-        const el = document.querySelector(${JSON.stringify(params.selector)});
-        if (!el) return null;
-        const rect = el.getBoundingClientRect();
-        return JSON.stringify({x: rect.x + rect.width / 2, y: rect.y + rect.height / 2});
-      })()`,
-      returnByValue: true,
-    });
-    if (!result.result?.value) {
-      return {
-        ok: false,
-        error: `Selector "${params.selector}" not found`,
-        code: 'SELECTOR_NOT_FOUND',
-      };
-    }
-    const coords = JSON.parse(result.result.value);
-    x = coords.x;
-    y = coords.y;
-  } else if (params.x !== undefined && params.y !== undefined) {
-    x = params.x;
-    y = params.y;
-  } else {
-    return { ok: false, error: 'Must specify x,y coordinates, --ref, or --selector', code: 'INVALID_ARGUMENT' };
-  }
+  const resolved = await resolveTargetCoords(cdp, {
+    ref: params.ref, selector: params.selector,
+    text: params.text, label: params.label,
+    x: params.x, y: params.y, tab: tabId, wait: params.wait,
+  });
+  if (!resolved.ok) return resolved;
+  const { x, y } = resolved.target!;
 
   const button = params.right ? 'right' : 'left';
   const clickCount = params.triple ? 3 : params.double ? 2 : 1;

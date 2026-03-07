@@ -84,6 +84,8 @@ export const ErrorCode = {
   COMMAND_DISABLED: 'COMMAND_DISABLED',
   PATH_BLOCKED: 'PATH_BLOCKED',
   PROTOCOL_BLOCKED: 'PROTOCOL_BLOCKED',
+  TEXT_NOT_FOUND: 'TEXT_NOT_FOUND',
+  LABEL_NOT_FOUND: 'LABEL_NOT_FOUND',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

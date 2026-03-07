@@ -90,6 +90,9 @@ Check `page.url` between commands to detect unexpected navigations. On error, re
 /tmp/brw click <x> <y>                    # Left click at coordinates
 /tmp/brw click --ref ref_5                 # Click element by ref ID
 /tmp/brw click --selector "button.submit"  # Click by CSS selector
+/tmp/brw click --text "Save and Continue"   # Click by visible text (no read-page needed)
+/tmp/brw click --label "Email"              # Click form input by label
+/tmp/brw click --text "Submit" --wait       # Wait up to 10s for element, then click
 /tmp/brw click <x> <y> --right            # Right click
 /tmp/brw click <x> <y> --double           # Double click
 ```
@@ -99,6 +102,8 @@ Check `page.url` between commands to detect unexpected navigations. On error, re
 ```bash
 /tmp/brw type "hello world"               # Type into focused element
 /tmp/brw type "new text" --clear           # Clear field first, then type
+/tmp/brw type "hello" --text "Search"       # Focus element by text, then type
+/tmp/brw type "test@email.com" --label "Email" --clear  # Focus by label, clear, type
 /tmp/brw key Enter                         # Press Enter
 /tmp/brw key "cmd+a"                       # Keyboard shortcut
 /tmp/brw key Tab --repeat 3                # Press Tab 3 times
@@ -134,6 +139,8 @@ Set form values programmatically (triggers change/input events):
 /tmp/brw form-input --ref ref_3 --value "test@example.com"  # Text input
 /tmp/brw form-input --ref ref_7 --value true                 # Checkbox
 /tmp/brw form-input --ref ref_9 --value "option2"            # Select dropdown
+/tmp/brw form-input --label "Password" --value "secret"   # Find by label text
+/tmp/brw form-input --text "Username" --value "john"       # Find by accessible name
 /tmp/brw form-input --selector "#email" --value "test@example.com"
 ```
 
@@ -278,10 +285,14 @@ K Enter"
 
 Ref-based commands are also available: `CR ref_5` (click ref), `FR ref_3 value` (form-input ref), `R` (read-page), `WF --text "Done"` (wait-for).
 
+Text-based commands: `CT Submit` (click by text), `FT Email test@example.com` (form-input by label).
+
 Returns a screenshot after the final command. See `references/QUICK-MODE.md` for the full command table.
 
 ## Tips
 
+- **Semantic targeting**: Use `--text`/`--label` instead of `--ref` when element text is stable — skips the read-page step. Add `--wait` for dynamic content.
+- **Multi-page wizards**: Chain `CT` + `WF` across pages in one quick call: `CT Next\nWF --text "Step 2"`. For JS-heavy forms, `J document.querySelector('form').submit()` + `WF --url */next*` skips coordinate resolution. Use `W 3` for fixed pauses between pages.
 - **Refs over coordinates**: Prefer `--ref ref_X` over coordinate clicks — refs are more reliable and survive scrolling.
 - **Skip auto-screenshot**: Use `--no-screenshot` when chaining actions before a manual screenshot. Saves time.
 - **SPAs**: Use `--wait render` for SPAs. For heavy apps (Gmail), prefer `--wait dom` + `wait-for --selector`.

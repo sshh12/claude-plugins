@@ -446,6 +446,10 @@ function getErrorHint(code: string): string {
       return 'Use "brw profile list" to see available profiles. Profiles are discovered from .claude/brw/profiles/ and ~/.config/brw/profiles/.';
     case ErrorCode.COMMAND_DISABLED:
       return 'Check disabledCommands in brw config or BRW_DISABLED_COMMANDS env var';
+    case ErrorCode.TEXT_NOT_FOUND:
+      return 'No interactive element matched --text. Try "brw read-page --search <text>" to find elements.';
+    case ErrorCode.LABEL_NOT_FOUND:
+      return 'No form input matched --label. Try "brw read-page --filter interactive --search <text>".';
     case ErrorCode.PATH_BLOCKED:
       return 'Check allowedPaths in brw config or BRW_ALLOWED_PATHS env var';
     case ErrorCode.PROTOCOL_BLOCKED:

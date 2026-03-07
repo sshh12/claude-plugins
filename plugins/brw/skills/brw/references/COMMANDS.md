@@ -106,18 +106,25 @@ brw screenshot [--full-page] [--ref REF] [--region x1,y1,x2,y2] [--tab ID]
 
 ## Mouse
 
+All mouse/form commands support element targeting by: `--ref` (from read-page), `--selector` (CSS), `--text` (visible name), `--label` (form label), or coordinates. Priority: ref > selector > text > label > coordinates.
+
 ### `brw click`
 
 ```bash
 brw click <x> <y> [flags] [--tab ID]
 brw click --ref <ref_id> [flags] [--tab ID]
 brw click --selector <css> [flags] [--tab ID]
+brw click --text <text> [flags] [--tab ID]
+brw click --label <label> [flags] [--tab ID]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--ref` | Click by ref ID from `read-page` |
 | `--selector` | Click by CSS selector |
+| `--text` | Click interactive element by visible text (case-insensitive substring match) |
+| `--label` | Click form input by associated label text |
+| `--wait [N]` | Wait up to N seconds for element (default 10, max 30). Works with --text, --label, --selector |
 | `--right` | Right click |
 | `--double` | Double click |
 | `--triple` | Triple click |
@@ -129,7 +136,15 @@ brw click --selector <css> [flags] [--tab ID]
 brw hover <x> <y> [--tab ID]
 brw hover --ref <ref_id> [--tab ID]
 brw hover --selector <css> [--tab ID]
+brw hover --text <text> [--tab ID]
+brw hover --label <label> [--tab ID]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--text` | Hover interactive element by visible text |
+| `--label` | Hover form input by label |
+| `--wait [N]` | Wait up to N seconds for element |
 
 ### `brw drag`
 
@@ -137,7 +152,16 @@ brw hover --selector <css> [--tab ID]
 brw drag <x1> <y1> <x2> <y2> [--tab ID]
 brw drag --from-ref <ref> --to-ref <ref> [--tab ID]
 brw drag --from-ref <ref> <x2> <y2> [--tab ID]
+brw drag --from-text <text> --to-text <text> [--tab ID]
+brw drag --from-label <label> --to-label <label> [--tab ID]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--from-text` | Start element by visible text |
+| `--to-text` | End element by visible text |
+| `--from-label` | Start element by label |
+| `--to-label` | End element by label |
 
 ---
 
@@ -147,10 +171,17 @@ brw drag --from-ref <ref> <x2> <y2> [--tab ID]
 
 ```bash
 brw type <text> [--clear] [--tab ID]
+brw type <text> --text <target> [--clear] [--tab ID]
+brw type <text> --label <label> [--clear] [--tab ID]
 ```
 
 | Flag | Description |
 |------|-------------|
+| `--ref` | Focus element by ref before typing |
+| `--selector` | Focus element by CSS selector before typing |
+| `--text` | Focus element by visible text before typing |
+| `--label` | Focus form input by label before typing |
+| `--wait [N]` | Wait up to N seconds for element |
 | `--clear` | Select all and delete before typing (like Playwright's `fill()`) |
 
 - Types character-by-character into the focused element
@@ -267,7 +298,15 @@ Scrolls an element into the viewport center.
 ```bash
 brw form-input --ref <ref_id> --value <value> [--tab ID]
 brw form-input --selector <css> --value <value> [--tab ID]
+brw form-input --text <text> --value <value> [--tab ID]
+brw form-input --label <label> --value <value> [--tab ID]
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--text` | Find element by visible text |
+| `--label` | Find form input by label text |
+| `--wait [N]` | Wait up to N seconds for element |
 
 Sets form element values programmatically, firing `change` and `input` events.
 

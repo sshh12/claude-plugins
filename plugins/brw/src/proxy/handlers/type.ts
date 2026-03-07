@@ -1,12 +1,18 @@
 import type { CDPManager } from '../cdp.js';
 import type { BrwConfig, ApiResponse } from '../../shared/types.js';
 import { handleScreenshot } from './screenshot.js';
+import { resolveTargetCoords } from './resolve-target.js';
 
 export async function handleType(
   cdp: CDPManager,
   config: BrwConfig,
   params: {
     text: string;
+    ref?: string;
+    selector?: string;
+    targetText?: string;
+    targetLabel?: string;
+    wait?: number;
     tab?: string;
     clear?: boolean;
     noScreenshot?: boolean;
@@ -14,6 +20,23 @@ export async function handleType(
 ): Promise<ApiResponse> {
   const tabId = params.tab;
   const client = cdp.getClient(tabId);
+
+  // If targeting specified, click element to focus it first
+  const hasTarget = params.ref || params.selector || params.targetText || params.targetLabel;
+  if (hasTarget) {
+    const resolved = await resolveTargetCoords(cdp, {
+      ref: params.ref, selector: params.selector,
+      text: params.targetText, label: params.targetLabel,
+      tab: tabId, wait: params.wait,
+    });
+    if (!resolved.ok) return resolved;
+    const { x, y } = resolved.target!;
+    await client.Input.dispatchMouseEvent({ type: 'mouseMoved', x, y, pointerType: 'mouse' });
+    await new Promise((r) => setTimeout(r, 50));
+    await client.Input.dispatchMouseEvent({ type: 'mousePressed', x, y, button: 'left', clickCount: 1, pointerType: 'mouse' });
+    await client.Input.dispatchMouseEvent({ type: 'mouseReleased', x, y, button: 'left', clickCount: 1, pointerType: 'mouse' });
+    await new Promise((r) => setTimeout(r, 100));
+  }
 
   // Clear existing content if requested
   if (params.clear) {
