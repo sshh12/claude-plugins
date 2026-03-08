@@ -1,0 +1,21 @@
+{
+  "name": "freetaxusa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tax filing automation plugin for Claude Code",
+  "scripts": {
+    "build": "bash build.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.65",
+    "pdfjs-dist": "^4.10.38",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/pngjs": "^6.0.5",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "freetaxusa",
+  "version": "0.1.0",
+  "description": "Automates tax filing on FreeTaxUSA with document extraction, research, and browser-based form filling",
+  "author": {
+    "name": "shrivu"
+  },
+  "repository": "https://github.com/shrivu/claude-plugins",
+  "license": "MIT",
+  "keywords": ["tax", "freetaxusa", "pdf", "extraction", "automation"]
+}

@@ -17,7 +17,7 @@ Shrivu's random Claude Code plugins.
 
 ## Plugins
 
-### brw
+### [brw](https://github.com/sshh12/claude-plugins/tree/main/plugins/brw)
 
 Full browser automation for Claude Code via Chrome DevTools Protocol. Navigate, click, type, screenshot, record GIFs, intercept network requests, and more — all from your terminal.
 
@@ -33,3 +33,20 @@ Then use `/brw` to start browsing. The proxy auto-starts on first command and st
 - **Record**: GIF recordings of multi-step workflows
 - **Multi-tab**: open, switch, and manage browser tabs
 - **Security**: configurable URL blocking, protocol restrictions, cookie scoping
+
+### [freetaxusa](https://github.com/sshh12/claude-plugins/tree/main/plugins/freetaxusa)
+
+Tax filing automation for FreeTaxUSA.com. Guides you through filing US federal and state taxes by extracting your tax documents, researching current tax rules, and automating browser-based form filling via `brw`.
+
+```
+/plugin install freetaxusa@shrivu-plugins
+```
+
+Then use `/freetaxusa` to start. The skill walks through 5 phases:
+- **Setup**: Explains risks, legal disclaimers, loads browser automation, gets consent
+- **Discovery**: Extracts text and images from your PDFs (W-2s, 1099s, etc.), builds a consolidated summary, front-loads all questions
+- **Research**: Fetches current-year tax brackets and rules, runs a life-change questionnaire, flags items that may need a CPA
+- **Filing**: Fills FreeTaxUSA forms section by section with a 4-source verification table (expected, entered, page read, screenshot)
+- **Review**: Generates a personalized HTML tax breakdown report, walks through a review checklist, creates a data purge reminder
+
+**Not a tax professional. Not tax advice.** The user reviews and submits their return themselves — the skill never auto-submits.
