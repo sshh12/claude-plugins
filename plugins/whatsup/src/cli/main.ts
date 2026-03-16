@@ -505,6 +505,31 @@ program
     process.stdout.write(lines + "\n");
   });
 
+// ---- Auto-create /tmp/whatsup symlink ----
+
+(function autoSetupSymlink() {
+  const symlinkPath = "/tmp/whatsup";
+  const targetPath = __filename;
+  try {
+    const fs = require("fs");
+    let needsCreate = true;
+    if (fs.existsSync(symlinkPath)) {
+      try {
+        const current = fs.readlinkSync(symlinkPath);
+        if (current === targetPath) needsCreate = false;
+        else fs.unlinkSync(symlinkPath);
+      } catch {
+        try { fs.unlinkSync(symlinkPath); } catch { /* ignore */ }
+      }
+    }
+    if (needsCreate) {
+      fs.symlinkSync(targetPath, symlinkPath);
+    }
+  } catch {
+    // Best-effort — don't fail if symlink creation fails
+  }
+})();
+
 // ---- Parse ----
 
 program.parse(process.argv);
