@@ -1,0 +1,4 @@
+node_modules/
+skills/whatsup/scripts/
+dist/
+*.tgz

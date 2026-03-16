@@ -17,6 +17,11 @@
       "name": "freetaxusa",
       "source": "./plugins/freetaxusa",
       "description": "Automates tax filing on FreeTaxUSA with document extraction, research, and browser-based form filling"
+    },
+    {
+      "name": "whatsup",
+      "source": "./plugins/whatsup",
+      "description": "WhatsApp messaging for Claude Code via Baileys WebSocket client"
     }
   ]
 }

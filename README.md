@@ -50,3 +50,18 @@ Then use `/freetaxusa` to start. The skill walks through 5 phases:
 - **Review**: Generates a personalized HTML tax breakdown report, walks through a review checklist, creates a data purge reminder
 
 **Not a tax professional. Not tax advice.** The user reviews and submits their return themselves — the skill never auto-submits.
+
+### [whatsup](https://github.com/sshh12/claude-plugins/tree/main/plugins/whatsup)
+
+WhatsApp messaging for Claude Code via the Baileys WebSocket client. Send and receive messages, react, share media/locations/polls, search chat history, and long-poll for incoming messages — all restricted to an allowlist of approved contacts.
+
+```
+/plugin install whatsup@shrivu-plugins
+```
+
+Then use `/whatsup` to start. The proxy auto-starts on first command. Key capabilities:
+- **Messaging**: send text, media, locations, polls, contact cards, reactions
+- **Monitoring**: long-poll for incoming messages, read chat history, search messages
+- **Profile**: set status text, update display name and picture
+- **Security**: allowlist-only sends, rate limiting, audit logging, untrusted content tagging
+- **Architecture**: same CLI + proxy pattern as brw — stateless CLI, persistent Fastify daemon, auto-start/stop
