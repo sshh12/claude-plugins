@@ -8,28 +8,37 @@ The connector you built runs anywhere that supports MCP servers. This stage cove
 
 ## Option A: Claude Code
 
-Register the MCP server directly:
+**Before running `claude mcp add`, confirm two things with the user:**
+
+1. **Permission to install.** Ask: *"Ready to add the MCP server to Claude Code?"* — don't install without asking.
+2. **Scope.** Ask which scope they want:
+
+| Scope | Flag | Effect | When to use |
+|-------|------|--------|-------------|
+| `local` | `-s local` (default) | Only available in the current directory | Testing, or if they only use this connector from one project |
+| `user` | `-s user` | Available everywhere for this user | **Recommended for most connectors** — the server works regardless of cwd |
+| `project` | `-s project` | Written to `.mcp.json`, committed to git | Shared team connectors — **warn: env vars with `-e` are written to the file, so never use this scope with API keys** |
+
+Suggest: *"I'd recommend `user` scope so the tools are available in any project. If you only want it in this directory, `local` works too. Want me to go with `user`?"*
 
 ```bash
-claude mcp add <app> node /absolute/path/to/<app>/server/index.js
+claude mcp add -s <scope> <app> node /absolute/path/to/<app>/server/index.js
 ```
 
 The server runs as a stdio process — Claude Code launches it automatically when you start a session.
 
+**Do not set `ALLOW_INLINE_LARGE=true` for Claude Code** — it can follow `resource_link` file URIs, so large results should be saved as files (the default).
+
 ### Adding env vars
 
-Pass environment variables with the `-e` flag:
+Pass environment variables with the `-e` flag when needed:
 
 ```bash
-# Enable inline for environments without file access
-claude mcp add <app> -e ALLOW_INLINE_LARGE=true node /absolute/path/to/<app>/server/index.js
-
-# Multiple env vars
-claude mcp add <app> \
-  -e ALLOW_INLINE_LARGE=true \
-  -e INCLUDE_DEBUG_TOOLS=true \
-  node /absolute/path/to/<app>/server/index.js
+# Example: enable debug tools for troubleshooting
+claude mcp add -s user <app> -e INCLUDE_DEBUG_TOOLS=true node /absolute/path/to/<app>/server/index.js
 ```
+
+**Warning:** With `project` scope, `-e` values are written to `.mcp.json` in plaintext. Never pass API keys or secrets with project scope — use `user` or `local` scope instead, or set env vars in the user's shell profile.
 
 ---
 

@@ -161,10 +161,10 @@ See `references/8-optimize.md`
 
 See `references/9-package-connect.md`
 
-- [ ] Connect to the first target (usually Claude Code): `claude mcp add <app> node /path/to/server/index.js`
+- [ ] Ask user for permission to install, and confirm scope (local/user/project) — see reference for scope guidance
 - [ ] **Proactively ask the user** if they'd also like to connect to other MCP clients (Cowork, OpenClaw, Claude Desktop, etc.) — don't assume one target is enough
 - [ ] For each additional target the user wants, follow the corresponding setup in the reference
-- [ ] Configure env vars as needed: `ALLOW_INLINE_LARGE`, `MCP_INLINE_THRESHOLD`, `INCLUDE_DEBUG_TOOLS`
+- [ ] Configure env vars as needed (leave `ALLOW_INLINE_LARGE` off for Claude Code and Cowork — they support file URIs)
 - [ ] Verify: tools appear in tool list and respond correctly in each connected client
 
 **Gate:** Tools appear in at least one client and return correct data. User has been offered and had the chance to set up additional clients.
