@@ -8,11 +8,11 @@ import {
 var BUILTIN_TOOLS = [
   {
     name: "set_output_dir",
-    description: "Change the directory where large responses are saved as files. Call this at the start of a session to point output to your working directory. Returns the resolved path.",
+    description: "Change the directory where large responses are saved as files. Call at session start. Use <working_directory>/<app-name>/ (e.g. /Users/me/project/spinach/) not the bare working directory \u2014 avoid cluttering the user's project root. If the project already has an output/ or data/ convention, follow that instead. In Cowork: check CLAUDE_CODE_WORKSPACE_HOST_PATHS env var for mounted host paths. Returns the resolved path.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Absolute path to the desired output directory" }
+        path: { type: "string", description: "Absolute path to output directory (e.g. /Users/me/project/<app-name>/)" }
       },
       required: ["path"]
     }
@@ -52,6 +52,7 @@ async function startServer({ meta, tools, handleTool, output }) {
     "MCP_INLINE_THRESHOLD",
     "ALLOW_INLINE_LARGE",
     "INCLUDE_DEBUG_TOOLS",
+    "COWORK",
     "PATH",
     "HOME",
     "SHELL"
@@ -60,8 +61,7 @@ async function startServer({ meta, tools, handleTool, output }) {
     switch (name) {
       case "set_output_dir": {
         output.setOutputDir(args.path);
-        const tip = process.env.COWORK ? " Tip: in Cowork, use request_cowork_directory to mount this path so saved files are readable." : "";
-        return { content: [{ type: "text", text: `Output directory set to: ${output.getOutputDir()}${tip}` }] };
+        return { content: [{ type: "text", text: `Output directory set to: ${output.getOutputDir()}` }] };
       }
       case `${meta.app}_debug_env`: {
         const safeEnv = Object.fromEntries(

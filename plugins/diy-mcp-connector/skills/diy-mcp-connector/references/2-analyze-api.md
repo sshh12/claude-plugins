@@ -65,6 +65,25 @@ Classify the app's auth mechanism before building anything. Check these signals 
 
 **How to confirm:** Strip all cookies from a request and add only the Authorization header. If it returns 200, the app is token-auth and cookies are irrelevant (likely analytics/tracking). If it returns 401, cookies carry auth.
 
+### Split API detection (public vs internal)
+
+Some apps have a documented public API on a different domain from what the browser actually uses. Example: Google Workspace — the browser hits `clients6.google.com` (internal, cookie-auth), but the public Docs/Sheets API is at `*.googleapis.com` (OAuth2 only). Notion, Figma, and similar apps may have the same split.
+
+**Detection:** Compare the domains in HAR/live traffic against the documented API docs. If the browser hits different endpoints than the public API, you have a split.
+
+**STOP and present the tradeoff before Stage 3.** Ask the user:
+
+*"This app has a documented public API (requires OAuth2/API key) and separate internal APIs (cookie-based, no setup). Which approach do you want?"*
+
+| Approach | Setup | Pros | Cons |
+|----------|-------|------|------|
+| Public API (OAuth2/API key) | Credentials required | Full structured access, documented, stable | User must set up credentials |
+| Internal APIs (cookie auth) | None — browser login | No setup, works immediately | Undocumented, may lack write/edit endpoints, can break without notice |
+
+If the user picks cookie-based internal APIs, classify as **cookie-auth** and build against the internal endpoints. If they pick OAuth2, classify as **api-key-auth** (or a custom OAuth2 flow) and build against the public API.
+
+Do not build for one approach and then switch — the tool design, auth layer, and endpoints all differ.
+
 ### Cookie-stored tokens
 
 Some SPAs store JWT tokens in cookies for persistence (survives tab close) but read them out with JavaScript and send them as `Authorization: Bearer` headers. The cookie is a storage mechanism, not the auth mechanism. This looks like cookie-auth during capture — cookies are present on every request and the API returns 200 — but replaying cookies via the `Cookie` header alone returns 401.

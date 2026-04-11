@@ -85,7 +85,7 @@ The skill activates and walks through 9 stages:
 1. **Capture** — Record API traffic via HAR files or live browser exploration (Claude for Chrome, brw, Playwright, or Chrome DevTools MCP — auto-detected)
 2. **Analyze** — Map endpoints, auth patterns, and data shapes
 3. **Design** — Plan 3-7 tools matching your workflows (you review before building)
-4. **Security** — Every tool reviewed against a 6-point checklist before code is written
+4. **Security** — Every tool reviewed against a 7-point checklist before code is written
 5. **Build** — Generate the server using battle-tested templates for auth and response handling
 6. **Auth** — Verify login flow works end-to-end
 7. **Test** — Automated tests plus real Claude CLI pressure testing

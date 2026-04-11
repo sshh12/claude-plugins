@@ -53,12 +53,15 @@ const BUILTIN_TOOLS: ToolDef[] = [
     name: "set_output_dir",
     description:
       "Change the directory where large responses are saved as files. " +
-      "Call this at the start of a session to point output to your working directory. " +
+      "Call at session start. Use <working_directory>/<app-name>/ (e.g. /Users/me/project/spinach/) " +
+      "not the bare working directory — avoid cluttering the user's project root. " +
+      "If the project already has an output/ or data/ convention, follow that instead. " +
+      "In Cowork: check CLAUDE_CODE_WORKSPACE_HOST_PATHS env var for mounted host paths. " +
       "Returns the resolved path.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Absolute path to the desired output directory" },
+        path: { type: "string", description: "Absolute path to output directory (e.g. /Users/me/project/<app-name>/)" },
       },
       required: ["path"],
     },
@@ -106,17 +109,15 @@ export async function startServer({ meta, tools, handleTool, output }: ServerCon
 
   const SAFE_ENV_KEYS = [
     "NODE_ENV", "MCP_OUTPUT_DIR", "MCP_INLINE_THRESHOLD",
-    "ALLOW_INLINE_LARGE", "INCLUDE_DEBUG_TOOLS", "PATH", "HOME", "SHELL",
+    "ALLOW_INLINE_LARGE", "INCLUDE_DEBUG_TOOLS", "COWORK",
+    "PATH", "HOME", "SHELL",
   ];
 
   async function dispatch(name: string, args: Record<string, unknown>): Promise<MCPToolResult> {
     switch (name) {
       case "set_output_dir": {
         output.setOutputDir(args.path as string);
-        const tip = process.env.COWORK
-          ? " Tip: in Cowork, use request_cowork_directory to mount this path so saved files are readable."
-          : "";
-        return { content: [{ type: "text", text: `Output directory set to: ${output.getOutputDir()}${tip}` }] };
+        return { content: [{ type: "text", text: `Output directory set to: ${output.getOutputDir()}` }] };
       }
       case `${meta.app}_debug_env`: {
         const safeEnv = Object.fromEntries(

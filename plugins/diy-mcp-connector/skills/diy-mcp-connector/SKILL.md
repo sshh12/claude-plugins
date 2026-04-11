@@ -54,6 +54,7 @@ See `references/2-analyze-api.md`
 - [ ] Run HAR analysis: `python3 scripts/analyze-har.py har/<app>.har --domain <domain>`
 - [ ] For GraphQL apps: `python3 scripts/analyze-har.py har/<app>.har --graphql --extract`
 - [ ] Classify auth pattern (api-key-auth, cookie-auth, spa-token-auth, or hybrid) — see fingerprinting table in reference
+- [ ] If split API detected (browser uses different domains than public API): present tradeoff and get user choice before proceeding
 - [ ] If api-key-auth: load `references/patterns/api-key-auth.md`
 - [ ] If spa-token-auth: load `references/patterns/spa-token-auth.md`
 - [ ] If GraphQL allowlisting detected: load `references/patterns/graphql-allowlist.md`
@@ -88,7 +89,7 @@ See `references/3-design-tools.md`
 See `references/4-security-review.md`
 
 - [ ] Write tool design from Stage 3 to `<app>/security-review/tool-design.md`
-- [ ] Spawn Opus security-reviewer subagent with the 6-point checklist (prompt template in reference)
+- [ ] Spawn Opus security-reviewer subagent with the 7-point checklist (prompt template in reference)
 - [ ] Subagent writes findings to `<app>/security-review/findings.md`
 - [ ] Read findings — if CRITICAL issues exist, fix the tool design and re-run the subagent (loop until clean)
 - [ ] Present final findings to user
@@ -208,7 +209,7 @@ After Stage 9 is complete, offer to generate a `<app>/<APP>_DEVELOPER_FEEDBACK.m
 
 Every generated server includes these tools automatically (not app-specific):
 
-- **`set_output_dir`** — Change where large responses are saved as files. Call at session start to point output to the working directory. Returns the resolved path after setting it.
+- **`set_output_dir`** — Change where large responses are saved as files. Call at session start with `<working_dir>/<app-name>/` (not the bare working directory — avoid cluttering the project root). Returns the resolved path.
 - **`<app>_debug_env`** — Dumps safe server environment info (Node version, output dir, config). Only available when `INCLUDE_DEBUG_TOOLS=true` (off by default). Uses an allowlist — never exposes API keys or tokens.
 
 ## Inline Config

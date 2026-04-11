@@ -8,10 +8,9 @@ The connector you built runs anywhere that supports MCP servers. This stage cove
 
 ## Option A: Claude Code
 
-**Before running `claude mcp add`, confirm two things with the user:**
+**STOP and ask before running `claude mcp add`.** Present the scope options, then wait for the user to reply before running the command. Do not install in the same turn as the question.
 
-1. **Permission to install.** Ask: *"Ready to add the MCP server to Claude Code?"* — don't install without asking.
-2. **Scope.** Ask which scope they want:
+Ask the user which scope they want:
 
 | Scope | Flag | Effect | When to use |
 |-------|------|--------|-------------|
@@ -19,7 +18,9 @@ The connector you built runs anywhere that supports MCP servers. This stage cove
 | `user` | `-s user` | Available everywhere for this user | **Recommended for most connectors** — the server works regardless of cwd |
 | `project` | `-s project` | Written to `.mcp.json`, committed to git | Shared team connectors — **warn: env vars with `-e` are written to the file, so never use this scope with API keys** |
 
-Suggest: *"I'd recommend `user` scope so the tools are available in any project. If you only want it in this directory, `local` works too. Want me to go with `user`?"*
+Suggest: *"I'd recommend `user` scope so the tools are available in any project. If you only want it in this directory, `local` works too. Which scope would you like?"*
+
+**Wait for their answer. Only then run:**
 
 ```bash
 claude mcp add -s <scope> <app> node /absolute/path/to/<app>/server/index.js

@@ -21,8 +21,9 @@ function setOutputDir(p) {
     fs.mkdirSync(p, { recursive: true, mode: 448 });
   } catch (err) {
     const msg = err.message ?? "";
+    const coworkHelp = process.env.COWORK ? ` This is a Cowork session. Session paths like /sessions/... don't exist on the host. Use a host path from your CLAUDE_CODE_WORKSPACE_HOST_PATHS env var as the base (e.g. <mounted_path>/<app-name>/), or call request_cowork_directory to mount one.` : "";
     throw new Error(
-      `setOutputDir: cannot create "${p}". If running in Cowork, use a full host path (e.g. /Users/<you>/Desktop/output) \u2014 session paths like /sessions/... don't exist on the host. In Cowork you can also mount a folder via request_cowork_directory. Original error: ${msg}`
+      `setOutputDir: cannot create "${p}".${coworkHelp} Use a full host path (e.g. /Users/<you>/Desktop/output). Original error: ${msg}`
     );
   }
   const resolved = fs.realpathSync(p);
@@ -102,7 +103,10 @@ function auditLog(action, details) {
   }
 }
 function fileHint(dir) {
-  return `To access saved files, call set_output_dir to point output to your working directory, or read files from: ${dir}`;
+  if (process.env.COWORK) {
+    return `Call set_output_dir with a mounted host path/<app-name>/ (check your CLAUDE_CODE_WORKSPACE_HOST_PATHS env).`;
+  }
+  return `Call set_output_dir with <working_directory>/<app-name>/ to access files, or read from: ${dir}`;
 }
 function buildFileResponse(filepath, { summary, mimeType = "application/octet-stream" } = {}) {
   const dir = path.dirname(filepath);

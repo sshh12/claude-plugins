@@ -9,6 +9,9 @@ Follow [Anthropic's tool engineering guide](https://www.anthropic.com/engineerin
 ### Consolidate related API calls
 A single tool should match a user workflow, not an API endpoint. A `<app>_get_project` that fetches project details + members + recent activity in one call beats three separate tools. Fewer tools means fewer round-trips and less room for the LLM to pick the wrong tool.
 
+### Never mix reads and writes in one tool
+Keep read and write operations as separate tools, even when they operate on the same entity. MCP clients allow users to approve tools individually — a combined `<app>_comments` tool with an `action: "list" | "create" | "resolve"` parameter forces the user to approve writes just to read. Instead: `<app>_list_comments` (read) and `<app>_create_comment` (write). This also makes the security review clearer — read tools pass by default, write tools get the full risk assessment.
+
 ### Combine search + detail
 When users typically search then immediately drill in, return enriched results. If your search returns IDs and titles, and users always follow up with "tell me more about the first one," combine search + detail into one tool that returns richer data upfront.
 
@@ -159,7 +162,7 @@ Include this disposition in the tool design table so it's reviewed alongside the
 
 ### set_output_dir
 Every generated server includes a `set_output_dir` built-in tool. When large responses are saved to files, the `fileHint` tells the caller:
-> "To access saved files, call set_output_dir to point output to your working directory, or read files from: <path>"
+> "To access saved files, call set_output_dir with <working_dir>/<app-name>/, or read files from: <path>"
 
 ### ALLOW_INLINE_LARGE behavior
 - **When off (default):** The `inline` parameter is omitted from tool schemas entirely. The agent never sees it. Large responses always go to files.

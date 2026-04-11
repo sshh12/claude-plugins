@@ -229,6 +229,13 @@ const result = await auth.authFetch(url, options, META.loginUrl, {
 
 When `validateFn` is provided, `captureLoginCookies` keeps polling Chrome for updated cookies until `validateFn` returns true or timeout. This prevents pre-auth cookie capture.
 
+### CDP capture gotchas
+
+When intercepting requests via CDP (`Network.requestWillBeSent`) to capture auth headers:
+- **Cookie header is never in `requestWillBeSent`** — the browser adds it automatically. Capture cookies separately via `Network.getCookies` and merge manually.
+- **Origin header context matters** — in-browser requests may be same-origin (no `Origin` sent). Replaying from Node.js with an `Origin` header can cause 400 errors. Strip it unless the original request explicitly included it.
+- **SSO redirects reset the page** — if Chrome navigates to a login page and back, CDP listeners set up before the redirect may miss post-login network events. Monitor `Page.frameNavigated` to detect when the user returns from login, then start capturing.
+
 ## package.json Generation
 
 ```json
@@ -252,11 +259,13 @@ When `validateFn` is provided, `captureLoginCookies` keeps polling Chrome for up
 
 The inline threshold defaults to 8 KB (`MCP_INLINE_THRESHOLD=8192`). Responses larger than this are automatically written to files and returned as `resource_link` URIs.
 
-Use `set_output_dir` to control where file output is written. By default, files go to `~/.diy-mcp/<app>/output/`. Call `set_output_dir` at the start of a session to redirect output to your working directory.
+Use `set_output_dir` to control where file output is written. By default, files go to `~/.diy-mcp/<app>/output/`. Call `set_output_dir` at session start with `<working_dir>/<app-name>/` — not the bare working directory, to avoid cluttering the user's project root. If the project has an existing `output/` or `data/` convention, follow that instead.
 
 ## Stage 5.5: Auth Smoke Test
 
 Before writing all tool handlers, make a single authenticated API call to verify auth works. **Run this in the foreground with stderr visible** — the first run opens Chrome for SSO login. Tell the user: *"A Chrome window will open — log in there and I'll capture the cookies."*
+
+**Test with a URL that triggers actual API calls**, not a generic homepage. Homepages often load only static assets or use different internal endpoints than the API your tools will call. Use the same endpoint one of your tools will hit.
 
 ```bash
 # Add a temporary test in index.js or run inline:

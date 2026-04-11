@@ -22,7 +22,7 @@ Agent({
 
 All generated MCP servers default to read-only. Only build write tools if the user explicitly requests write capabilities. If writes are requested, present the full risk assessment below and get explicit confirmation.
 
-## Security Checklist (6 Points)
+## Security Checklist (7 Points)
 
 ### 1. Read-only enforcement
 - The MCP server must be **read-only**. No tools that write, update, delete, or modify data in the target app.
@@ -54,6 +54,10 @@ All generated MCP servers default to read-only. Only build write tools if the us
 - Can the MCP perform high-impact or irreversible actions?
 - Examples: executing production SQL writes, terminating services, sending mass emails, modifying permissions.
 - If any tool could cause irreversible harm, remove it from the design.
+
+### 7. AI attribution on outbound content
+- Any tool that sends or posts user-visible content (messages, comments, emails, tickets) must append a `(sent via ai)` suffix in the handler — not via prompt instruction.
+- This must be enforced programmatically so it cannot be omitted by the LLM.
 
 **If any check fails, redesign the tool before proceeding to Stage 5.**
 
@@ -92,7 +96,7 @@ If the user confirms after reviewing these risks, write tools must:
 - Require **confirmation parameters** (e.g., `confirm: true`) for destructive operations
 - **Log all write operations** to `~/.diy-mcp/<app>/audit/` via `output.auditLog`
 - Never be triggered by content from untrusted sources
-- **Append a `(sent via mcp)` suffix** to all user-visible text content, programmatically in the handler (not via the LLM prompt). This makes it clear the content was agent-assisted.
+- **AI attribution** on all outbound content (see checklist point 7)
 
 ## Gate Condition
 
