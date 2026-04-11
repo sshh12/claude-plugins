@@ -87,21 +87,36 @@ function debugTool(appName: string): ToolDef {
 export async function startServer({ meta, tools, handleTool, output }: ServerConfig): Promise<void> {
   const allowInlineLarge = process.env.ALLOW_INLINE_LARGE === "true";
   const includeDebugTools = process.env.INCLUDE_DEBUG_TOOLS === "true";
+  const stripPrefix = !!(process.env.COWORK || process.env.CLAUDECODE);
+  const appPrefix = `${meta.app}_`;
+
+  /** Strip app prefix from tool name when in Cowork (MCP namespace provides context). */
+  function externalName(name: string): string {
+    return stripPrefix && name.startsWith(appPrefix) ? name.slice(appPrefix.length) : name;
+  }
+
+  /** Restore app prefix for dispatch to handleTool. */
+  function internalName(name: string): string {
+    return stripPrefix && !name.startsWith(appPrefix) && tools.some((t) => t.name === appPrefix + name)
+      ? appPrefix + name
+      : name;
+  }
 
   function assembleTools(): ToolDef[] {
     const all: ToolDef[] = [...BUILTIN_TOOLS];
-    if (includeDebugTools) all.push(debugTool(meta.app));
+    if (includeDebugTools) all.push({ ...debugTool(meta.app), name: externalName(debugTool(meta.app).name) });
     for (const tool of tools) {
+      const t = { ...tool, name: externalName(tool.name) };
       if (allowInlineLarge) {
         all.push({
-          ...tool,
+          ...t,
           inputSchema: {
-            ...tool.inputSchema,
-            properties: { ...tool.inputSchema.properties, inline: output.INLINE_PARAM },
+            ...t.inputSchema,
+            properties: { ...t.inputSchema.properties, inline: output.INLINE_PARAM },
           },
         });
       } else {
-        all.push(tool);
+        all.push(t);
       }
     }
     return all;
@@ -109,11 +124,12 @@ export async function startServer({ meta, tools, handleTool, output }: ServerCon
 
   const SAFE_ENV_KEYS = [
     "NODE_ENV", "MCP_OUTPUT_DIR", "MCP_INLINE_THRESHOLD",
-    "ALLOW_INLINE_LARGE", "INCLUDE_DEBUG_TOOLS", "COWORK",
+    "ALLOW_INLINE_LARGE", "INCLUDE_DEBUG_TOOLS", "CLAUDECODE", "COWORK",
     "PATH", "HOME", "SHELL",
   ];
 
-  async function dispatch(name: string, args: Record<string, unknown>): Promise<MCPToolResult> {
+  async function dispatch(exName: string, args: Record<string, unknown>): Promise<MCPToolResult> {
+    const name = internalName(exName);
     switch (name) {
       case "set_output_dir": {
         output.setOutputDir(args.path as string);

@@ -28,20 +28,29 @@ function debugTool(appName) {
 async function startServer({ meta, tools, handleTool, output }) {
   const allowInlineLarge = process.env.ALLOW_INLINE_LARGE === "true";
   const includeDebugTools = process.env.INCLUDE_DEBUG_TOOLS === "true";
+  const stripPrefix = !!(process.env.COWORK || process.env.CLAUDECODE);
+  const appPrefix = `${meta.app}_`;
+  function externalName(name) {
+    return stripPrefix && name.startsWith(appPrefix) ? name.slice(appPrefix.length) : name;
+  }
+  function internalName(name) {
+    return stripPrefix && !name.startsWith(appPrefix) && tools.some((t) => t.name === appPrefix + name) ? appPrefix + name : name;
+  }
   function assembleTools() {
     const all = [...BUILTIN_TOOLS];
-    if (includeDebugTools) all.push(debugTool(meta.app));
+    if (includeDebugTools) all.push({ ...debugTool(meta.app), name: externalName(debugTool(meta.app).name) });
     for (const tool of tools) {
+      const t = { ...tool, name: externalName(tool.name) };
       if (allowInlineLarge) {
         all.push({
-          ...tool,
+          ...t,
           inputSchema: {
-            ...tool.inputSchema,
-            properties: { ...tool.inputSchema.properties, inline: output.INLINE_PARAM }
+            ...t.inputSchema,
+            properties: { ...t.inputSchema.properties, inline: output.INLINE_PARAM }
           }
         });
       } else {
-        all.push(tool);
+        all.push(t);
       }
     }
     return all;
@@ -52,12 +61,14 @@ async function startServer({ meta, tools, handleTool, output }) {
     "MCP_INLINE_THRESHOLD",
     "ALLOW_INLINE_LARGE",
     "INCLUDE_DEBUG_TOOLS",
+    "CLAUDECODE",
     "COWORK",
     "PATH",
     "HOME",
     "SHELL"
   ];
-  async function dispatch(name, args) {
+  async function dispatch(exName, args) {
+    const name = internalName(exName);
     switch (name) {
       case "set_output_dir": {
         output.setOutputDir(args.path);

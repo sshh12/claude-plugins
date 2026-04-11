@@ -23,8 +23,10 @@ Suggest: *"I'd recommend `user` scope so the tools are available in any project.
 **Wait for their answer. Only then run:**
 
 ```bash
-claude mcp add -s <scope> <app> node /absolute/path/to/<app>/server/index.js
+claude mcp add -s <scope> <app> -e CLAUDECODE=true node /absolute/path/to/<app>/server/index.js
 ```
+
+Always pass `-e CLAUDECODE=true` — this strips the redundant app prefix from tool names (e.g. `gdocs_read` → `read`) since Claude Code already namespaces tools as `mcp__<app>__`.
 
 The server runs as a stdio process — Claude Code launches it automatically when you start a session.
 
@@ -36,7 +38,7 @@ Pass environment variables with the `-e` flag when needed:
 
 ```bash
 # Example: enable debug tools for troubleshooting
-claude mcp add -s user <app> -e INCLUDE_DEBUG_TOOLS=true node /absolute/path/to/<app>/server/index.js
+claude mcp add -s user <app> -e CLAUDECODE=true -e INCLUDE_DEBUG_TOOLS=true node /absolute/path/to/<app>/server/index.js
 ```
 
 **Warning:** With `project` scope, `-e` values are written to `.mcp.json` in plaintext. Never pass API keys or secrets with project scope — use `user` or `local` scope instead, or set env vars in the user's shell profile.
@@ -176,7 +178,8 @@ Any application that supports the MCP protocol can use the connector. The server
 | `MCP_INLINE_THRESHOLD` | `8192` | Byte threshold for auto-filing responses. |
 | `ALLOW_INLINE_LARGE` | `"false"` | Show `inline` param in tool schemas so agents can force large responses inline. |
 | `INCLUDE_DEBUG_TOOLS` | `"false"` | Expose `<app>_debug_env` tool for troubleshooting. |
-| `COWORK` | `"false"` | Enables Cowork-specific hints (e.g. mount directory tip in `set_output_dir`). Set automatically in Cowork configs. |
+| `CLAUDECODE` | `"false"` | Strips app prefix from tool names (MCP namespace provides context). Set when installing in Claude Code. |
+| `COWORK` | `"false"` | Strips app prefix from tool names + enables Cowork-specific hints (mount directory tips). Set in Cowork configs. |
 
 ### When to enable ALLOW_INLINE_LARGE
 
