@@ -30,6 +30,16 @@ Transcripts, documents, full exports — anything over ~8KB should be written to
 ### Write descriptions like onboarding docs
 Tool descriptions should explain what the tool does, when to use it, and what the output looks like. Use precise parameter names (`user_id` not `user`, `jql_query` not `query`). Include examples in parameter descriptions when the format is not obvious.
 
+### Describe tradeoffs between related tools
+When multiple tools return different levels of detail for the same entity (e.g. summary vs transcript, list vs detail, preview vs export), each description must say **what it contains, what it omits, and when to prefer it over the alternative**. Without this, the agent defaults to the lighter tool even when the user's intent requires the richer one.
+
+Bad: `"Get meeting summary"` / `"Get meeting transcript"`
+Good:
+- `"Get a structured summary: TL;DR, action items, decisions, blockers. Use when you need to scan many meetings or report on outcomes. Does NOT include the actual conversation — use get_transcript for communication style, exact quotes, or nuance."`
+- `"Get the full word-for-word transcript. Use when the user needs exact quotes, conversational dynamics, tone, or behavioral feedback. Much larger than summaries — prefer summary when only outcomes matter."`
+
+The key is helping the agent match the user's *intent* (e.g. "give me feedback on my meetings" → behavioral → needs transcripts) to the right level of detail, not just describing the data format.
+
 ## Quick Mode (Single-String Batch)
 
 Evaluate whether the app benefits from a quick-mode tool. Instead of structured JSON with arrays of objects, use a **single `commands` string parameter** with newline-separated shorthand commands. This is faster for the LLM to generate (less structured output, fewer tokens) and faster to parse.
