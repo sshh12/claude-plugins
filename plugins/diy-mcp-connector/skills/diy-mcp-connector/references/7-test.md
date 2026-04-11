@@ -44,7 +44,7 @@ echo "Handled but not defined:"
 comm -13 <(echo "$DEFINED" | sort) <(echo "$HANDLED" | sort)
 ```
 
-Both lists should be empty. Built-in tools (`set_output_dir`, `get_output_dir`, `<app>_debug_env`) are handled separately and will appear in the second list — that is expected.
+Both lists should be empty. Built-in tools (`set_output_dir`, `<app>_debug_env`) are handled separately and will appear in the second list — that is expected.
 
 ## Claude CLI Pressure Test
 

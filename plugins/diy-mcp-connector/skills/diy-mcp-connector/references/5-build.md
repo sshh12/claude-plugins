@@ -70,7 +70,7 @@ Always present — do not modify:
 const BUILTIN_TOOLS = [
   {
     name: "set_output_dir",
-    description: "Change the directory where large responses are saved as files. Call this at the start of a session to point output to your working directory.",
+    description: "Change the directory where large responses are saved as files. Call this at the start of a session to point output to your working directory. Returns the resolved path.",
     inputSchema: {
       type: "object",
       properties: {
@@ -78,11 +78,6 @@ const BUILTIN_TOOLS = [
       },
       required: ["path"],
     },
-  },
-  {
-    name: "get_output_dir",
-    description: "Returns the current output directory path where large responses are saved.",
-    inputSchema: { type: "object", properties: {} },
   },
 ];
 
@@ -127,8 +122,6 @@ async function handleTool(name, args) {
     case "set_output_dir":
       output.setOutputDir(args.path);
       return { content: [{ type: "text", text: `Output directory set to: ${output.getOutputDir()}` }] };
-    case "get_output_dir":
-      return { content: [{ type: "text", text: output.getOutputDir() }] };
     case `${META.app}_debug_env`: {
       const SAFE_KEYS = ["NODE_ENV", "MCP_OUTPUT_DIR", "MCP_INLINE_THRESHOLD",
         "ALLOW_INLINE_LARGE", "INCLUDE_DEBUG_TOOLS", "PATH", "HOME", "SHELL"];

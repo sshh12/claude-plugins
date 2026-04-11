@@ -201,8 +201,7 @@ After Stage 9 is complete, offer to generate a `<app>/<APP>_DEVELOPER_FEEDBACK.m
 
 Every generated server includes these tools automatically (not app-specific):
 
-- **`set_output_dir`** — Change where large responses are saved as files. Call at session start to point output to the working directory.
-- **`get_output_dir`** — Returns the current output directory path.
+- **`set_output_dir`** — Change where large responses are saved as files. Call at session start to point output to the working directory. Returns the resolved path after setting it.
 - **`<app>_debug_env`** — Dumps safe server environment info (Node version, output dir, config). Only available when `INCLUDE_DEBUG_TOOLS=true` (off by default). Uses an allowlist — never exposes API keys or tokens.
 
 ## Inline Config

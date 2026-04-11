@@ -4,6 +4,22 @@ Turn any web app into a set of tools that Claude can call directly — no browse
 
 This is a skill you run in **Claude Code**. It builds connectors that work with **Claude Code**, **Claude Desktop (Cowork)**, and **any other MCP-supporting application**.
 
+## Example: WHOOP
+
+Here's a connector built for [WHOOP](https://www.whoop.com), a fitness tracker that monitors strain, recovery, and sleep. WHOOP is just one example — some apps already have third-party MCP servers, but this skill works for any web app you can log into. If it has a UI, it has an API, and you can build a connector for it.
+
+| Claude Code | Cowork |
+|:-----------:|:------:|
+| <img width="459" alt="WHOOP MCP connector in Claude Code" src="https://github.com/user-attachments/assets/f4b8b42b-6ff7-4988-967a-a420058a3f0a" /> | <img width="401" alt="WHOOP MCP connector in Cowork" src="https://github.com/user-attachments/assets/61360ab5-a571-4244-96ba-0d7db7ce30c8" /> |
+
+*"Show me last week in WHOOP" — last week was rough...*
+
+|  | Browser automation | MCP connector | Reduction |
+|--|---|---|---|
+| **Tokens** | ~16,000 (12 tool calls, screenshots, visual parsing) | ~2,800 (1 tool call, structured JSON) | **~82%** |
+| **Latency** | ~30-45s | ~1-2s | **~96%** |
+| **Tool calls** | 10-12 | 1 | **~91%** |
+
 ## The problem
 
 You use web apps every day — recipe sites, banking dashboards, fitness trackers, hobby forums, project boards, whatever. When you want Claude to help with data from these apps, your options today are bad:
@@ -78,16 +94,9 @@ The skill activates and walks through 9 stages:
 
 ## What you get
 
-A self-contained folder for your app:
+A working connector that handles login, caching, and data formatting automatically. You sign in through Chrome once, and it remembers your session from there. No API keys needed for most apps.
 
-- **`server/`** — The connector itself. A main file with your tools (`index.js`), plus shared modules that handle login (`auth.js`), response formatting (`output.js`), and optionally GraphQL or CSRF support if the app needs them.
-- **`har/`** — The API recordings from the discovery phase, kept around for reference.
-- **`test/`** — A test script so you can verify any tool with one command.
-- **`scripts/`** — The HAR analyzer, in case you want to re-examine the API later.
-
-Run `node server/index.js` and it handles everything — logging in via Chrome, caching your session, formatting responses, saving large outputs to files. No external services, no API keys for most apps.
-
-The connector works with Claude Code (via `claude mcp add`), Claude Desktop/Cowork (via `.mcpb` extension or config file), OpenClaw (via `openclaw mcp set`), or any application that supports MCP servers.
+Works with Claude Code, Cowork, OpenClaw, or any MCP client.
 
 > **"Won't too many MCP tools slow things down?"**
 >

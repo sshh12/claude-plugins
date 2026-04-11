@@ -76,8 +76,7 @@ Create a `manifest.json` in the project root:
     }
   },
   "tools": [
-    { "name": "set_output_dir", "description": "Change output directory at runtime" },
-    { "name": "get_output_dir", "description": "Show current output directory" }
+    { "name": "set_output_dir", "description": "Change output directory at runtime" }
   ]
 }
 ```
