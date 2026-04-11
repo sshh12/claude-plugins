@@ -1,0 +1,11 @@
+{
+  "name": "diy-mcp-connector",
+  "version": "0.1.0",
+  "description": "Guides Claude through building a dedicated MCP server for any web app, from API discovery through testing and deployment",
+  "author": {
+    "name": "shrivu"
+  },
+  "repository": "https://github.com/shrivu/claude-plugins",
+  "license": "MIT",
+  "keywords": ["mcp", "connector", "api", "automation", "web-app"]
+}

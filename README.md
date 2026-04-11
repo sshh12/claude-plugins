@@ -8,13 +8,6 @@
 
 Shrivu's random Claude Code plugins.
 
-## Install
-
-```sh
-/plugin marketplace add sshh12/claude-plugins
-/plugin install <plugin-name>@shrivu-plugins
-```
-
 ## Plugins
 
 ### [brw](https://github.com/sshh12/claude-plugins/tree/main/plugins/brw)
@@ -24,6 +17,7 @@ Full browser automation for Claude Code via Chrome DevTools Protocol. Navigate, 
 **Why brw?** Claude for Chrome is a black box that requires a subscription. Playwright MCP and Chrome DevTools MCP servers don't handle highly parallel agent workflows well — they weren't designed for multiple agents sharing one browser concurrently. brw is a lightweight proxy built for agent-first usage: stateless CLI, per-tab mutexes, and JSON output that agents can parse directly.
 
 ```
+/plugin marketplace add sshh12/claude-plugins
 /plugin install brw@shrivu-plugins
 ```
 
@@ -39,6 +33,7 @@ Then use `/brw` to start browsing. The proxy auto-starts on first command and st
 Tax filing automation for FreeTaxUSA.com. Guides you through filing US federal and state taxes by extracting your tax documents, researching current tax rules, and automating browser-based form filling via `brw`.
 
 ```
+/plugin marketplace add sshh12/claude-plugins
 /plugin install freetaxusa@shrivu-plugins
 ```
 
@@ -56,6 +51,7 @@ Then use `/freetaxusa` to start. The skill walks through 5 phases:
 WhatsApp messaging for Claude Code via the Baileys WebSocket client. Send and receive messages, react, share media/locations/polls, search chat history, and long-poll for incoming messages — all restricted to an allowlist of approved contacts.
 
 ```
+/plugin marketplace add sshh12/claude-plugins
 /plugin install whatsup@shrivu-plugins
 ```
 
@@ -65,3 +61,19 @@ Then use `/whatsup` to start. The proxy auto-starts on first command. Key capabi
 - **Profile**: set status text, update display name and picture
 - **Security**: allowlist-only sends, rate limiting, audit logging, untrusted content tagging
 - **Architecture**: same CLI + proxy pattern as brw — stateless CLI, persistent Fastify daemon, auto-start/stop
+
+### [diy-mcp-connector](https://github.com/sshh12/claude-plugins/tree/main/plugins/diy-mcp-connector)
+
+Turn any web app into a set of tools that Claude can call directly — no browser automation, no screenshots, no copy-pasting between tabs. Instead of Claude navigating a UI like a human (screenshot, click, wait, screenshot again), your connector talks to the app's API and returns clean, structured data. One tool call replaces 4-6 browser steps with ~80% fewer tokens and ~10x faster responses.
+
+```
+/plugin marketplace add sshh12/claude-plugins
+/plugin install diy-mcp-connector@shrivu-plugins
+```
+
+Then tell Claude which app you want to connect — "I want to connect my recipe app so I can search recipes and pull ingredient lists into Claude." The skill walks through 9 stages: capturing API traffic, designing tools around your workflows, security review, building the server, testing, and connecting it to your MCP client. You don't write the code — Claude does.
+
+- **Uses your existing login** — sign in through Chrome once and the connector remembers your session
+- **API discovery** — auto-detects browser tools you have (Claude for Chrome, brw, Playwright) for live exploration, or works with manual HAR file captures
+- **Read-only by default** — Claude can look up your data but can't accidentally change anything
+- **Works everywhere** — Claude Code, Claude Desktop/Cowork, OpenClaw, or any MCP client

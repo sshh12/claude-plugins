@@ -1,0 +1,17 @@
+{
+  "name": "diy-mcp-connector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Template scripts for generated diy-mcp MCP servers",
+  "scripts": {
+    "build": "bash build.sh",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.2",
+    "ws": "^8.20.0"
+  }
+}
