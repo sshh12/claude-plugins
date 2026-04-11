@@ -308,8 +308,9 @@ async function rawFetch(url, options = {}, _attempt = 0) {
   });
   const ct = resp.headers.get("content-type") || "";
   let body;
+  const maxResponseLen = parseInt(process.env.MCP_MAX_RESPONSE_LEN || "10000000", 10);
   let text = await resp.text();
-  if (text.length > 1e5) text = text.slice(0, 1e5) + "\n... [truncated]";
+  if (text.length > maxResponseLen) text = text.slice(0, maxResponseLen) + "\n... [truncated]";
   if (ct.includes("application/json")) {
     try {
       body = JSON.parse(text);
@@ -398,6 +399,11 @@ async function ensureCDPPage(domain) {
   }
 }
 async function getCookiesFromPage(wsUrl, domain) {
+  const domainParts = domain.split(".");
+  const matchSuffixes = [domain];
+  for (let i = 1; i < domainParts.length; i++) {
+    matchSuffixes.push("." + domainParts.slice(i).join("."));
+  }
   return new Promise((resolve) => {
     const ws = new WebSocket(wsUrl);
     const timer = setTimeout(() => {
@@ -412,7 +418,7 @@ async function getCookiesFromPage(wsUrl, domain) {
         JSON.stringify({
           id: 1,
           method: "Network.getCookies",
-          params: { urls: [`https://${domain}`, `http://${domain}`] }
+          params: {}
         })
       );
     };
@@ -421,7 +427,12 @@ async function getCookiesFromPage(wsUrl, domain) {
       if (msg.id === 1) {
         clearTimeout(timer);
         ws.close();
-        resolve(msg.result?.cookies || []);
+        const all = msg.result?.cookies || [];
+        const matched = all.filter((c) => {
+          const cd = c.domain || "";
+          return matchSuffixes.some((s) => cd === s || cd === "." + domain);
+        });
+        resolve(matched.length > 0 ? matched : all.length > 0 ? all : []);
       }
     };
     ws.onerror = () => {

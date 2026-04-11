@@ -56,6 +56,7 @@ Create a `manifest.json` in the project root:
       "command": "node",
       "args": ["${__dirname}/server/index.js"],
       "env": {
+        "COWORK": "true",
         "ALLOW_INLINE_LARGE": "${user_config.allow_inline_large}",
         "MCP_OUTPUT_DIR": "${user_config.output_dir}"
       }
@@ -89,13 +90,15 @@ npx @anthropic-ai/mcpb validate manifest.json
 npx @anthropic-ai/mcpb pack .
 ```
 
-This produces a `<app>-1.0.0.mcpb` file. Install it in Cowork by either:
+This produces a `<app>-1.0.0.mcpb` file. Try installing in Cowork by either:
 - **Double-clicking** the `.mcpb` file, or
 - **Settings > Extensions > Advanced settings > Install Extension** and selecting the file
 
-### B2: Edit claude_desktop_config.json directly
+**`.mcpb` install is unreliable** — it may silently fail (no dialog, no error). Always immediately offer the manual config fallback: *"I'll try the extension install. If nothing happens, I can add it directly to your Cowork config file instead — want me to do that now?"* Don't wait for the user to report failure.
 
-If extension installation is blocked, add the server manually:
+### B2: Edit claude_desktop_config.json directly (recommended fallback)
+
+Add the server manually — this always works:
 
 ```json
 {
@@ -104,8 +107,7 @@ If extension installation is blocked, add the server manually:
       "command": "node",
       "args": ["/absolute/path/to/<app>/server/index.js"],
       "env": {
-        "ALLOW_INLINE_LARGE": "true",
-        "MCP_OUTPUT_DIR": "/path/to/output"
+        "COWORK": "true"
       }
     }
   }
@@ -164,10 +166,11 @@ Any application that supports the MCP protocol can use the connector. The server
 | `MCP_INLINE_THRESHOLD` | `8192` | Byte threshold for auto-filing responses. |
 | `ALLOW_INLINE_LARGE` | `"false"` | Show `inline` param in tool schemas so agents can force large responses inline. |
 | `INCLUDE_DEBUG_TOOLS` | `"false"` | Expose `<app>_debug_env` tool for troubleshooting. |
+| `COWORK` | `"false"` | Enables Cowork-specific hints (e.g. mount directory tip in `set_output_dir`). Set automatically in Cowork configs. |
 
 ### When to enable ALLOW_INLINE_LARGE
 
-- **Claude Code or Cowork:** Leave off (default). These are coding/agent environments where Claude can read files from your computer. Large results get saved as files, and Claude reads them when needed.
+- **Claude Code, Cowork, or any desktop agent environment:** Leave off (default). These can follow `resource_link` file URIs. Large results get saved as files, and Claude reads them when needed.
 - **Claude Chat, API, or other non-coding tools:** Turn on. In these environments Claude can't open files on your machine, so large results need to come back directly in the conversation. The tradeoff is longer messages when responses are big.
 
 ---

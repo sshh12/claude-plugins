@@ -482,8 +482,9 @@ async function rawFetch(
   // Always read as text first — response body is a stream that can only be
   // consumed once. Reading via resp.json() then falling back to resp.text()
   // fails because the stream is already consumed.
+  const maxResponseLen = parseInt(process.env.MCP_MAX_RESPONSE_LEN || "10000000", 10);
   let text = await resp.text();
-  if (text.length > 100_000) text = text.slice(0, 100_000) + "\n... [truncated]";
+  if (text.length > maxResponseLen) text = text.slice(0, maxResponseLen) + "\n... [truncated]";
   if (ct.includes("application/json")) {
     try {
       body = JSON.parse(text);
@@ -578,7 +579,20 @@ async function ensureCDPPage(domain: string): Promise<CDPPage | null> {
   }
 }
 
+/**
+ * Fetch all cookies from a CDP page, filtered to the target domain and its
+ * parent domains. Uses an empty `urls` param so CDP returns every cookie in the
+ * browsing context — this handles SSO flows where auth cookies land on a parent
+ * domain (e.g. `.spinach.io`) or a different subdomain than the API target.
+ */
 async function getCookiesFromPage(wsUrl: string, domain: string): Promise<CDPCookie[] | null> {
+  // Build list of domain suffixes to match: api.example.com → [api.example.com, .example.com, .com]
+  const domainParts = domain.split(".");
+  const matchSuffixes: string[] = [domain];
+  for (let i = 1; i < domainParts.length; i++) {
+    matchSuffixes.push("." + domainParts.slice(i).join("."));
+  }
+
   return new Promise((resolve) => {
     const ws = new WebSocket(wsUrl);
     const timer = setTimeout(() => {
@@ -586,11 +600,12 @@ async function getCookiesFromPage(wsUrl: string, domain: string): Promise<CDPCoo
       resolve(null);
     }, 5000);
     ws.onopen = () => {
+      // Empty urls → all cookies in the browsing context
       ws.send(
         JSON.stringify({
           id: 1,
           method: "Network.getCookies",
-          params: { urls: [`https://${domain}`, `http://${domain}`] },
+          params: {},
         }),
       );
     };
@@ -599,7 +614,13 @@ async function getCookiesFromPage(wsUrl: string, domain: string): Promise<CDPCoo
       if (msg.id === 1) {
         clearTimeout(timer);
         ws.close();
-        resolve((msg.result?.cookies as CDPCookie[]) || []);
+        const all = (msg.result?.cookies as CDPCookie[]) || [];
+        // Keep cookies whose domain matches the target or any parent domain
+        const matched = all.filter((c) => {
+          const cd = c.domain || "";
+          return matchSuffixes.some((s) => cd === s || cd === "." + domain);
+        });
+        resolve(matched.length > 0 ? matched : all.length > 0 ? all : []);
       }
     };
     ws.onerror = () => {

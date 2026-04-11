@@ -55,6 +55,7 @@ Classify the app's auth mechanism before building anything. Check these signals 
 
 | Signal | Classification | Build path |
 |--------|---------------|------------|
+| Documented REST API with key from dashboard/env var, no browser login | **api-key-auth** | No `auth.js`. See `patterns/api-key-auth.md` |
 | API calls carry `Authorization: Bearer <token>` or `Authorization: <token>` header | **spa-token-auth** | Use `token.js` template. See `patterns/spa-token-auth.md` |
 | Known OIDC SDK keys in localStorage (`@@auth0spajs@@`, `okta-token-storage`, `firebase:authUser:`, `CognitoIdentityServiceProvider`) | **spa-token-auth** | Use `token.js` template. See `patterns/spa-token-auth.md` |
 | httpOnly cookies on the app's domain carry auth (removing cookies → 401) | **cookie-auth** (default) | Use `auth.js` template |
@@ -96,6 +97,7 @@ How does the app handle search? Test in the UI and watch what fires:
 - HTML partial rendered server-side
 - GraphQL query with filter variables
 - POST-based search (form submission)
+- **Client-side search** — the "search" endpoint takes a list of IDs (no query parameter) and returns all data; the SPA filters locally. If the request body has no query string, search is client-side and the MCP tool must implement its own filtering.
 
 ### GraphQL: check for query allowlisting
 
@@ -112,4 +114,4 @@ If API responses contain nested component trees with `type`/`component`/`__typen
 
 ## Gate Condition
 
-**Endpoint inventory documented with: (1) list of endpoints grouped by workflow, (2) auth pattern classified (cookie-auth, spa-token-auth, or hybrid), (3) response shapes noted for key endpoints, (4) GraphQL allowlisting status checked if applicable.** Do not proceed to Stage 3 without this.
+**Endpoint inventory documented with: (1) list of endpoints grouped by workflow, (2) auth pattern classified (api-key-auth, cookie-auth, spa-token-auth, or hybrid), (3) response shapes noted for key endpoints, (4) GraphQL allowlisting status checked if applicable.** Do not proceed to Stage 3 without this.

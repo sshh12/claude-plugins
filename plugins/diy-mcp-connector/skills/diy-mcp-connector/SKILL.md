@@ -37,12 +37,13 @@ This skill runs in Claude Code and builds a standalone MCP server that turns one
 
 See `references/1-capture-api.md`
 
-- [ ] Detect available browser tools (Claude for Chrome, brw, Playwright, Chrome DevTools MCP) via `claude mcp list`
+- [ ] If api-key-auth with documented API: skip HAR, document endpoints from docs/existing code
+- [ ] Otherwise: detect available browser tools via `claude mcp list`
 - [ ] Choose capture method: HAR files, live exploration (using detected tool), or both
 - [ ] Capture API traffic across all major app sections (not just one page)
 - [ ] Save HAR to `<app>/har/<app>.har` (if using HAR method)
 
-**Gate:** At least one HAR file saved or endpoint list documented from live exploration. Do not proceed without this.
+**Gate:** At least one HAR file saved, endpoint list documented from live exploration, or endpoint inventory from API docs. Do not proceed without this.
 
 ---
 
@@ -52,7 +53,8 @@ See `references/2-analyze-api.md`
 
 - [ ] Run HAR analysis: `python3 scripts/analyze-har.py har/<app>.har --domain <domain>`
 - [ ] For GraphQL apps: `python3 scripts/analyze-har.py har/<app>.har --graphql --extract`
-- [ ] Classify auth pattern (cookie-auth, spa-token-auth, or hybrid) — see fingerprinting table in reference
+- [ ] Classify auth pattern (api-key-auth, cookie-auth, spa-token-auth, or hybrid) — see fingerprinting table in reference
+- [ ] If api-key-auth: load `references/patterns/api-key-auth.md`
 - [ ] If spa-token-auth: load `references/patterns/spa-token-auth.md`
 - [ ] If GraphQL allowlisting detected: load `references/patterns/graphql-allowlist.md`
 - [ ] If SDUI response shapes detected: load `references/patterns/sdui.md`
@@ -72,6 +74,8 @@ See `references/3-design-tools.md`
 - [ ] Consolidate related API calls into user-workflow tools
 - [ ] Evaluate batch/multi-tool pattern for common multi-step workflows
 - [ ] Namespace tools by app: `<app>_<action>`
+- [ ] Spawn Opus subagent to brainstorm 10-15 realistic user prompts and identify coverage gaps (see reference)
+- [ ] Adjust design for any significant gaps found
 - [ ] Present tool design table to user and get feedback
 - [ ] Incorporate feedback
 
@@ -79,16 +83,18 @@ See `references/3-design-tools.md`
 
 ---
 
-## Stage 4: Security Review
+## Stage 4: Security Review (Subagent)
 
 See `references/4-security-review.md`
 
-- [ ] Run 6-point security checklist on every designed tool
-- [ ] Review built-in tools (`set_output_dir`) for path injection risks
-- [ ] Present checklist results to user
-- [ ] If write tools requested: present risk assessment and get explicit confirmation
+- [ ] Write tool design from Stage 3 to `<app>/security-review/tool-design.md`
+- [ ] Spawn Opus security-reviewer subagent with the 6-point checklist (prompt template in reference)
+- [ ] Subagent writes findings to `<app>/security-review/findings.md`
+- [ ] Read findings — if CRITICAL issues exist, fix the tool design and re-run the subagent (loop until clean)
+- [ ] Present final findings to user
+- [ ] If write tools requested: present risk assessment and get explicit user confirmation
 
-**Gate:** All 6 security checks pass and results are shown to user. Do not start building until this is done.
+**Gate:** Security reviewer subagent reports no CRITICAL issues (or user explicitly accepts remaining risks). Findings shown to user. **Await the subagent's completion before starting Stage 5** — do not run the security review in the background while building.
 
 ---
 
@@ -97,12 +103,11 @@ See `references/4-security-review.md`
 See `references/5-build.md`
 
 - [ ] Copy template scripts from `"${SKILL_DIR}/scripts/"`:
-  - Always: `auth.js`, `output.js`
+  - Always: `server.js`, `auth.js`, `output.js`
   - If GraphQL: also `graphql.js`
   - If CSRF-protected (Rails/Django/etc.): also `csrf.js`
   - Always: `test-tool.sh` → `test/test-tool.sh`
-- [ ] Create `server/index.js` following the contract in the reference
-- [ ] Call `auth.init(META.app)` and `output.init(META.app)` at startup
+- [ ] Create `server/index.js`: META + APP_TOOLS + handleTool + `await startServer(...)` (see reference for contract)
 - [ ] Implement tool handlers using `auth.authFetch` and `output.buildResponse`
 - [ ] Generate `package.json` with `type: "module"` and dependencies
 - [ ] Run `npm install`
@@ -117,26 +122,27 @@ See `references/5-build.md`
 
 See `references/6-auth-verification.md`
 
-- [ ] Fresh login test: clear cookies, run tool, complete SSO
-- [ ] Cookie reuse test: same call, no Chrome launch
-- [ ] Auth failure recovery test: corrupt cookies, verify re-login
-- [ ] App-specific auth test (GraphQL null-data, CSRF invalidation)
+- [ ] If api-key-auth: verify valid key works, missing key errors clearly, invalid key errors clearly
+- [ ] If cookie-auth: fresh login test, cookie reuse test, auth failure recovery test
+- [ ] App-specific auth test (GraphQL null-data, CSRF invalidation) if applicable
 
-**Gate:** All auth tests pass.
+**Gate:** All auth tests pass for the app's auth classification.
 
 ---
 
-## Stage 7: Test
+## Stage 7: Test (Parallel Subagents)
 
 See `references/7-test.md`
 
-- [ ] Direct stdio test via `test/test-tool.sh`
-- [ ] Tool-name consistency check (every tool in `APP_TOOLS` has a `handleTool` case)
-- [ ] Claude CLI pressure test with realistic user queries
-- [ ] Verbose debug for full tool call inspection
+- [ ] Create `test/.mcp-test.json` config pointing to `server/index.js`
+- [ ] Spawn test subagents in parallel (single message, multiple Agent calls):
+  - **stdio-tester**: Run `test/test-tool.sh` for every tool + `--list`, report pass/fail per tool
+  - **consistency-checker**: Verify every name in `APP_TOOLS` has a matching `handleTool` case and vice versa
+  - **pressure-tester**: Claude CLI pressure tests across 4 categories (happy path, edge cases, multi-tool, wrong-tool)
+- [ ] Aggregate results from all subagents into `<app>/test/results.md`
 - [ ] Evaluate: accuracy, tool call count, token usage, error frequency
 
-**Gate:** All test types pass, results reported to user.
+**Gate:** All subagents report pass. Aggregated results reported to user.
 
 ---
 
@@ -183,7 +189,8 @@ After Stage 9 is complete, offer to generate a `<app>/<APP>_DEVELOPER_FEEDBACK.m
 <app>/
 ├── package.json              # type: "module", deps: @modelcontextprotocol/sdk, ws
 ├── server/
-│   ├── index.js              # MCP server + META + TOOLS + handleTool + wiring
+│   ├── index.js              # META + APP_TOOLS + handleTool + startServer()
+│   ├── server.js             # MCP harness: built-in tools, wiring, error handling
 │   ├── auth.js               # Cookie persistence + Chrome CDP auto-login
 │   ├── output.js             # Response builder + set_output_dir
 │   ├── graphql.js            # GraphQL client with auth retry (if needed)
@@ -218,6 +225,7 @@ Every generated server includes these tools automatically (not app-specific):
 | Script | Type | When to copy | Usage |
 |--------|------|-------------|-------|
 | `analyze-har.py` | Executable | To `scripts/` (always) | `python3 scripts/analyze-har.py har/<app>.har --domain <domain>` |
+| `server.js` | Template | To `server/` (always) | MCP harness: built-in tools, wiring, error handling |
 | `auth.js` | Template | To `server/` (always) | Cookie persistence + Chrome CDP auto-login |
 | `output.js` | Template | To `server/` (always) | Response builder with `set_output_dir` |
 | `graphql.js` | Template | To `server/` (if GraphQL) | `createGraphQLClient()` with auth-failure retry |

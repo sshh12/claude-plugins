@@ -1,56 +1,10 @@
-# Stage 7: Test
+# Stage 7: Test (Parallel Subagents)
 
-All test types below are required. Do not skip the Claude CLI pressure test — it catches issues that stdio tests miss (wrong tool selection, poor descriptions, response size problems).
+Spawn three test subagents in parallel (single message, multiple Agent calls). Each writes results to `<app>/test/` and returns a summary.
 
-## Direct stdio Test
+## Setup
 
-Use the bundled test runner for fast single-tool verification:
-
-```bash
-# Call a specific tool with arguments
-./test/test-tool.sh <app>_<tool_name> '{"key":"value"}'
-
-# List all available tools
-./test/test-tool.sh --list
-```
-
-The test runner handles the JSON-RPC envelope (initialize, notifications/initialized, tools/call) so you do not need to construct it manually. It pretty-prints the response and exits with a non-zero code on errors.
-
-For raw stdio testing without the helper:
-
-```bash
-printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"<app>_<tool>","arguments":{"key":"value"}}}\n' | node server/index.js 2>/dev/null | tail -1 | python3 -m json.tool
-```
-
-## Tool-Name Consistency Check
-
-For each tool name defined in `APP_TOOLS`, verify that `handleTool` has a matching `case` in the switch statement. Missing cases cause "Unknown tool" errors at runtime.
-
-Automated check:
-
-```bash
-# Extract tool names from APP_TOOLS definitions
-DEFINED=$(grep -oP 'name:\s*"(\K[^"]+)' server/index.js)
-
-# Extract case labels from handleTool
-HANDLED=$(grep -oP 'case\s+"(\K[^"]+)' server/index.js)
-
-# Find tools defined but not handled
-echo "Defined but not handled:"
-comm -23 <(echo "$DEFINED" | sort) <(echo "$HANDLED" | sort)
-
-# Find cases with no matching tool definition
-echo "Handled but not defined:"
-comm -13 <(echo "$DEFINED" | sort) <(echo "$HANDLED" | sort)
-```
-
-Both lists should be empty. Built-in tools (`set_output_dir`, `<app>_debug_env`) are handled separately and will appear in the second list — that is expected.
-
-## Claude CLI Pressure Test
-
-### Setup
-
-Create `test/.mcp-test.json` (add to `.gitignore`):
+Create `test/.mcp-test.json` before spawning subagents:
 
 ```json
 {
@@ -63,46 +17,80 @@ Create `test/.mcp-test.json` (add to `.gitignore`):
 }
 ```
 
-### Run test queries
+## Subagents
 
-```bash
-claude --mcp-config test/.mcp-test.json \
-  --allowedTools 'mcp__<app>__*' \
-  -p 'your test prompt here'
+Spawn all three in a single message:
+
+### 1. stdio-tester
+
+```
+Agent({
+  description: "stdio tool tests",
+  prompt: `Test every tool in the MCP server at <APP_DIR>. Note: test-tool.sh may hang on first run if auth requires interactive login — if a tool times out, re-run after cookies are cached.
+
+Run ./test/test-tool.sh --list to get all tools, then call each with representative arguments. For each tool report: tool name, arguments used, pass/fail, response summary, any errors.
+
+Write results to <APP_DIR>/test/stdio-results.md. Return pass/fail count.`
+})
 ```
 
-### Test categories
+### 2. consistency-checker
 
-Generate test prompts that mimic real user queries. Cover all four categories:
+```
+Agent({
+  description: "tool-name consistency check",
+  prompt: `Check tool-name consistency in <APP_DIR>/server/index.js.
 
-1. **Happy path** — straightforward queries the tools are designed for
-   - "What are the open tickets assigned to me?"
-   - "Search for documents about onboarding"
-2. **Edge cases** — missing data, empty results, very large responses
-   - "Find tickets from project NONEXISTENT"
-   - "Get the full transcript for meeting X" (tests large response handling)
-3. **Multi-tool workflows** — questions requiring data from multiple tools
-   - "Find the latest sprint and list all bugs in it"
-   - "Search for user X and show their recent activity"
-4. **Wrong tool selection** — queries that sound similar but should not trigger your tools
-   - Queries about unrelated domains to verify the LLM does not force-fit your tools
+Verify: every tool name in APP_TOOLS has a matching case in handleTool, and every case in handleTool has a matching APP_TOOLS entry. Built-in tools (set_output_dir, *_debug_env) are handled separately — exclude them.
 
-## Verbose Debug
+Write results to <APP_DIR>/test/consistency-results.md. Return any mismatches found.`
+})
+```
 
-For full tool call inspection, use stream-json output parsing:
+### 3. pressure-tester
+
+```
+Agent({
+  description: "Claude CLI pressure tests",
+  prompt: `Pressure-test the MCP server at <APP_DIR> using Claude CLI.
+
+Run: claude --mcp-config <APP_DIR>/test/.mcp-test.json --allowedTools 'mcp__<app>__*' -p '<prompt>'
+
+Test 4 categories (2+ prompts each):
+1. Happy path — straightforward queries the tools handle
+2. Edge cases — empty results, missing data, large responses
+3. Multi-tool — questions requiring multiple tool calls
+4. Wrong tool — queries that should NOT trigger these tools
+
+For each: record the prompt, tools called, token usage, accuracy (cross-check against expected behavior).
+
+Write results to <APP_DIR>/test/pressure-results.md. Return overall pass/fail and any tools that need description or schema fixes.`
+})
+```
+
+## Aggregation
+
+After all subagents complete:
+
+1. Read the three result files
+2. Combine into `<app>/test/results.md` with an overall status
+3. Track metrics: accuracy, tool call count, token usage, error frequency
+4. If any subagent reported failures, identify which tools need fixes before Stage 8
+
+## Verbose debug (manual fallback)
+
+If a pressure test failure needs deeper inspection:
 
 ```bash
 claude --mcp-config test/.mcp-test.json \
   --verbose --output-format stream-json \
   --allowedTools 'mcp__<app>__*' \
-  -p 'your prompt' 2>&1 | python3 -c "
+  -p 'prompt' 2>&1 | python3 -c "
 import sys, json
 for line in sys.stdin:
     try:
         d = json.loads(line.strip())
-        if d.get('type') == 'system':
-            print('MCP:', json.dumps(d.get('mcp_servers', []), indent=2))
-        elif d.get('type') == 'assistant':
+        if d.get('type') == 'assistant':
             for c in d.get('message',{}).get('content',[]):
                 if c.get('type') == 'text': print(c['text'])
                 elif c.get('type') == 'tool_use':
@@ -111,21 +99,6 @@ for line in sys.stdin:
 "
 ```
 
-This shows exactly which tools Claude selects, what arguments it passes, and what responses it receives — essential for diagnosing wrong-tool-selection and parameter issues.
-
-## Evaluation Metrics
-
-Track these metrics across all pressure test prompts:
-
-| Metric | What to look for |
-|---|---|
-| **Accuracy** | Did the tool return the correct data? Cross-check against the app UI. |
-| **Tool call count** | Excessive calls indicate tools need consolidation or richer responses. |
-| **Token usage** | Large inline responses waste context window. Switch to `resource_link` for anything over the inline threshold. |
-| **Error frequency** | Repeated errors mean schemas or descriptions need work. Check for parameter type mismatches, missing required fields, and unclear descriptions. |
-
-Record results for each test prompt. If any metric is consistently poor for a specific tool, return to Stage 8 (Optimize) to fix it.
-
 ## Gate Condition
 
-**All test types pass: direct stdio returns valid data, tool-name consistency check shows no gaps, Claude CLI pressure test covers all four categories, and evaluation metrics are acceptable.** Report results to the user before proceeding to Stage 8.
+**All three subagents report pass. Aggregated results in `<app>/test/results.md` reported to user.**

@@ -155,6 +155,40 @@ Every generated server includes a `set_output_dir` built-in tool. When large res
 - **When off (default):** The `inline` parameter is omitted from tool schemas entirely. The agent never sees it. Large responses always go to files.
 - **When on:** `INLINE_PARAM` is added to every app tool's schema. The agent can pass `inline: true` to force large content inline. Use this in Claude Chat or environments without filesystem access.
 
+## Validate with User Flow Brainstorm (Subagent)
+
+Before presenting the design, spawn an Opus subagent to brainstorm realistic user prompts that would exercise the tools. This catches coverage gaps before the user reviews.
+
+```
+Agent({
+  description: "Brainstorm user flows for MCP tools",
+  model: "opus",
+  prompt: `You are validating an MCP tool design for <APP_DISPLAY_NAME> (<APP_DOMAIN>).
+
+The app does: <1-2 sentence description of the app>.
+
+Proposed tools:
+<paste the tool design table here>
+
+Generate 10-15 realistic prompts a user would type in Claude Code that would need these tools. Cover:
+- Simple lookups ("show me my recent X")
+- Search + drill-in ("find X matching Y, then get details on the first one")
+- Cross-entity queries ("what's the status of all X in project Y?")
+- Temporal queries ("what changed since last week?")
+- Aggregation/summary ("summarize my activity this month")
+
+For each prompt, note which tool(s) would be called and whether the current design handles it.
+
+Output:
+1. The prompts with tool mapping
+2. GAPS: any prompts that the current tools cannot handle, with a suggested fix (new tool, additional parameter, or combine existing tools)
+
+Keep it brief — bullet points, not essays.`
+})
+```
+
+Review the subagent's gaps. If any are significant, adjust the tool design before presenting to the user. Minor gaps can be noted as future enhancements.
+
 ## Design Output Format
 
 Produce a table mapping captured API operations to designed tools:

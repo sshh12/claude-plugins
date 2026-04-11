@@ -17,7 +17,14 @@ function setOutputDir(p) {
   if (p.includes("/../") || p.endsWith("/..") || p.startsWith("../")) {
     throw new Error("setOutputDir: path traversal (/../) is not allowed");
   }
-  fs.mkdirSync(p, { recursive: true, mode: 448 });
+  try {
+    fs.mkdirSync(p, { recursive: true, mode: 448 });
+  } catch (err) {
+    const msg = err.message ?? "";
+    throw new Error(
+      `setOutputDir: cannot create "${p}". If running in Cowork, use a full host path (e.g. /Users/<you>/Desktop/output) \u2014 session paths like /sessions/... don't exist on the host. In Cowork you can also mount a folder via request_cowork_directory. Original error: ${msg}`
+    );
+  }
   const resolved = fs.realpathSync(p);
   if (!path.isAbsolute(resolved)) {
     throw new Error(`setOutputDir: path must be absolute, got: ${resolved}`);

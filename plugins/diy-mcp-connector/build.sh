@@ -49,5 +49,15 @@ npx esbuild src/graphql.ts \
   --outfile="$OUT_DIR/graphql.js" \
   --tree-shaking=true
 
+echo "Building server.js..."
+npx esbuild src/server.ts \
+  --bundle \
+  --platform=node \
+  --target=node18 \
+  --format=esm \
+  --outfile="$OUT_DIR/server.js" \
+  --external:@modelcontextprotocol/sdk \
+  --tree-shaking=true
+
 echo "Build complete:"
-ls -lh "$OUT_DIR/auth.js" "$OUT_DIR/output.js" "$OUT_DIR/csrf.js" "$OUT_DIR/graphql.js"
+ls -lh "$OUT_DIR/auth.js" "$OUT_DIR/output.js" "$OUT_DIR/csrf.js" "$OUT_DIR/graphql.js" "$OUT_DIR/server.js"

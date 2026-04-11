@@ -47,7 +47,17 @@ export function setOutputDir(p: string): void {
   }
 
   // Create the directory so realpathSync can resolve symlinks
-  fs.mkdirSync(p, { recursive: true, mode: 0o700 });
+  try {
+    fs.mkdirSync(p, { recursive: true, mode: 0o700 });
+  } catch (err) {
+    const msg = (err as NodeJS.ErrnoException).message ?? "";
+    throw new Error(
+      `setOutputDir: cannot create "${p}". If running in Cowork, use a full host path ` +
+      `(e.g. /Users/<you>/Desktop/output) — session paths like /sessions/... don't exist ` +
+      `on the host. In Cowork you can also mount a folder via request_cowork_directory. ` +
+      `Original error: ${msg}`,
+    );
+  }
   const resolved = fs.realpathSync(p);
 
   if (!path.isAbsolute(resolved)) {

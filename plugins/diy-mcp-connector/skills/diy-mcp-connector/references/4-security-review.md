@@ -1,6 +1,22 @@
-# Stage 4: Security Review
+# Stage 4: Security Review (Subagent)
 
-Review every designed tool against this security checklist before writing any code. Every tool must pass all checks. Present results to the user.
+Spawn an independent Opus subagent to review the tool design against the checklist below. An independent reviewer catches things the builder misses.
+
+## Workflow
+
+1. Write the tool design from Stage 3 to `<app>/security-review/tool-design.md` — include each tool's name, description, parameters, endpoints called, response data, and whether write tools were requested
+2. Spawn the reviewer subagent:
+
+```
+Agent({
+  description: "Security review of MCP tool design",
+  model: "opus",
+  prompt: `Security-review the MCP tool design at <APP_DIR>/security-review/tool-design.md against the checklist in ${SKILL_DIR}/references/4-security-review.md. Write findings to <APP_DIR>/security-review/findings.md with: status (PASS/FAIL/PASS_WITH_WARNINGS), per-tool checklist table, critical issues list, warnings list. Severity: CRITICAL (blocks build), WARNING (user decides), INFO (noted). Return a one-sentence summary.`
+})
+```
+
+3. Read `<app>/security-review/findings.md` — if any CRITICAL findings, fix the design and re-run (max 3 rounds)
+4. Present findings to user. If write tools were requested, also present the write tool risks below and get explicit confirmation.
 
 ## Default: Read-Only
 
@@ -63,20 +79,11 @@ These checks prevent a prompt injection attack from redirecting output to sensit
 
 Only present this if the user explicitly requests write capabilities. Stop and present these 5 risks before building:
 
-### 1. Prompt injection leading to unintended writes
-An LLM processes untrusted content (emails, tickets, documents). A malicious payload embedded in that content could trick the LLM into calling a write tool — e.g., a ticket comment containing hidden instructions that cause the agent to create or modify tickets, or a message that triggers the agent to post to other channels.
-
-### 2. Data exfiltration via writes
-Write tools that send data (post a message, create a record, send an email) can be exploited to exfiltrate sensitive information. An attacker embeds instructions in external content that cause the agent to copy internal data into an attacker-visible location.
-
-### 3. Accidental destructive actions
-The LLM may misinterpret a user's intent and perform irreversible actions — deleting resources, modifying permissions, sending messages to the wrong recipients, or overwriting data. Unlike read operations, these cannot be undone.
-
-### 4. Scope escalation
-Write tools authenticated with the user's SSO session inherit all of that user's permissions. A tool designed to "create a ticket in project X" has the same write access as the user — it could modify any project, reassign any resource, or change any field the user has access to.
-
-### 5. Cascading effects
-Writes can trigger downstream automations — webhooks, workflows, email notifications, CI/CD pipelines. A single unintended write can cascade into alerts, deployments, or notifications affecting many people.
+1. **Prompt injection leading to unintended writes** — A malicious payload embedded in external content could trick the LLM into calling a write tool.
+2. **Data exfiltration via writes** — Write tools can be exploited to copy internal data into an attacker-visible location.
+3. **Accidental destructive actions** — The LLM may misinterpret intent and perform irreversible actions.
+4. **Scope escalation** — Write tools inherit all of the user's SSO session permissions.
+5. **Cascading effects** — Writes can trigger downstream automations (webhooks, workflows, email notifications, CI/CD pipelines).
 
 ### Requirements for write tools
 
@@ -89,4 +96,4 @@ If the user confirms after reviewing these risks, write tools must:
 
 ## Gate Condition
 
-**All 6 security checks pass and results are presented to the user.** Do not start building until this is confirmed. If write tools are requested, the user must also explicitly confirm after reviewing the 5 risks.
+**Subagent reports no CRITICAL issues (or user explicitly accepts risks). Findings shown to user. Do not build until confirmed.**

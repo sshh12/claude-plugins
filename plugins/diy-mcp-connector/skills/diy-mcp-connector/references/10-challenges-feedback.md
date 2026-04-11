@@ -40,39 +40,33 @@ Each challenge should follow this structure:
 
 ---
 
-## What to include
+## Classify Each Challenge
 
-Review the full build session and capture challenges from every stage. Common categories:
+For each challenge, tag it with one of these categories. This determines whether the issue is actionable for improving the skill.
 
-**Auth & login issues**
-- Auth pattern misclassification (cookie vs token, hybrid detection)
-- Bot detection blocking automated Chrome (Cloudflare, Akamai, etc.)
-- Chrome instance conflicts during auth testing
-- Pre-auth cookie capture (analytics cookies before SSO completes)
-- Token extraction timing (localStorage not populated yet)
+### Skill gaps (highest signal)
+Issues where the skill's stages, templates, or docs didn't cover a real scenario. These improve the skill directly.
 
-**API discovery issues**
-- Internal API vs developer API differences
-- Undocumented endpoints, inconsistent response shapes
-- GraphQL allowlisting discovered mid-build
-- Pagination behavior different from expected
+- **Missing auth classification** — the app's auth pattern wasn't recognized (e.g. API-key, OAuth device flow)
+- **Stage didn't apply** — a required stage was inapplicable for this app type (e.g. HAR capture for a documented API)
+- **Template mismatch** — a bundled template assumed behavior the app doesn't have
+- **Gate too strict/loose** — a gate blocked progress unnecessarily, or let a broken state through
+- **Missing pattern** — a known pattern (SDUI, allowlisting, CSRF) wasn't detected or documented
 
-**Response format issues**
-- Non-standard date/time formats (database-level representations)
-- Unlabeled units (milliseconds, bytes, enum values)
-- Mixed response types (JSON for some endpoints, HTML for others)
-- Nested/SDUI responses requiring extraction
+### Recurring gotchas (medium signal)
+Issues that affect many apps and could be documented better.
 
-**Build issues**
-- Stream consumption bugs (body read twice)
-- stdout contamination breaking MCP protocol
-- Missing dependencies or version incompatibilities
-- CORS or domain validation issues
+- Auth: pre-auth cookie capture, bot detection, Chrome instance conflicts, SSO redirect domain changes
+- API: pagination differences, mixed response types, internal vs public API divergence
+- Build: stdout contamination, env var passing, stream consumption, date/timezone bugs
+- Testing: response size tuning, empty/error edge cases
 
-**Testing issues**
-- Tool naming collisions
-- Response size thresholds needed tuning
-- Edge cases in empty/error responses
+### App-specific quirks (low signal)
+Issues unique to this app's API that don't generalize. Still worth documenting for the user's reference, but don't suggest skill changes for these.
+
+- Vendor-specific API inconsistencies (e.g. different param shapes between endpoints)
+- Undocumented API behavior specific to this service
+- Workarounds for this app's particular data model
 
 ---
 
@@ -89,4 +83,5 @@ Review the full build session and capture challenges from every stage. Common ca
 
 1. Write the report to `<app>/<APP>_DEVELOPER_FEEDBACK.md`
 2. Tell the user where the file is and offer a brief summary
-3. Ask if they'd like to share any of the challenges as feedback to improve the diy-mcp-connector skill — e.g. *"Any of these issues feel like something the skill should handle better out of the box?"*
+3. Highlight any challenges tagged as **skill gaps** — these are the ones worth feeding back
+4. Ask: *"Any of the skill-gap issues feel like something worth fixing in the templates or docs? I can make the changes now."*

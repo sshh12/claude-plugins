@@ -1,17 +1,15 @@
 # Stage 5: Build
 
-Create the MCP server. This is the longest stage — follow the contract precisely.
+Create the MCP server. Copy template scripts, write `server/index.js`, and verify it starts.
 
 ## server/index.js Contract
 
-Every generated server follows this structure:
+The `server.js` template handles all boilerplate: built-in tools (`set_output_dir`, `debug_env`), inline param injection, error handling, and MCP stdio wiring. The generated `index.js` only provides app-specific code:
 
 ```js
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import * as auth from "./auth.js";
 import * as output from "./output.js";
+import { startServer } from "./server.js";
 // Conditional: import { createGraphQLClient } from "./graphql.js";
 // Conditional: import { createCsrfManager } from "./csrf.js";
 
@@ -38,13 +36,8 @@ output.init(META.app);
 //   domain: META.domain, loginUrl: META.loginUrl,
 //   authFetch: auth.authFetch, pageUrl: "https://<domain>/some-page",
 // });
-```
 
-### APP_TOOLS array
-
-Define 3-7 tools matching the approved design from Stage 3:
-
-```js
+// -- App tools ----------------------------------------------------------------
 const APP_TOOLS = [
   {
     name: "<app>_<action>",
@@ -60,121 +53,29 @@ const APP_TOOLS = [
   },
   // ... more tools
 ];
-```
 
-### BUILTIN_TOOLS and DEBUG_TOOL
-
-Always present — do not modify:
-
-```js
-const BUILTIN_TOOLS = [
-  {
-    name: "set_output_dir",
-    description: "Change the directory where large responses are saved as files. Call this at the start of a session to point output to your working directory. Returns the resolved path.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        path: { type: "string", description: "Absolute path to the desired output directory" },
-      },
-      required: ["path"],
-    },
-  },
-];
-
-const DEBUG_TOOL = {
-  name: `${META.app}_debug_env`,
-  description: "Dump server environment: Node.js version, working directory, output dir, inline config. Use to diagnose connection or path issues.",
-  inputSchema: { type: "object", properties: {} },
-};
-```
-
-### assembleTools with conditional inline param
-
-```js
-const allowInlineLarge = process.env.ALLOW_INLINE_LARGE === "true";
-const includeDebugTools = process.env.INCLUDE_DEBUG_TOOLS === "true";
-
-function assembleTools() {
-  const tools = [...BUILTIN_TOOLS];
-  if (includeDebugTools) tools.push(DEBUG_TOOL);
-  for (const tool of APP_TOOLS) {
-    if (allowInlineLarge) {
-      tools.push({
-        ...tool,
-        inputSchema: {
-          ...tool.inputSchema,
-          properties: { ...tool.inputSchema.properties, inline: output.INLINE_PARAM },
-        },
-      });
-    } else {
-      tools.push(tool);
-    }
-  }
-  return tools;
-}
-```
-
-### handleTool switch
-
-```js
+// -- App tool handler ---------------------------------------------------------
 async function handleTool(name, args) {
   switch (name) {
-    case "set_output_dir":
-      output.setOutputDir(args.path);
-      return { content: [{ type: "text", text: `Output directory set to: ${output.getOutputDir()}` }] };
-    case `${META.app}_debug_env`: {
-      const SAFE_KEYS = ["NODE_ENV", "MCP_OUTPUT_DIR", "MCP_INLINE_THRESHOLD",
-        "ALLOW_INLINE_LARGE", "INCLUDE_DEBUG_TOOLS", "PATH", "HOME", "SHELL"];
-      const safeEnv = Object.fromEntries(
-        SAFE_KEYS.filter(k => k in process.env).map(k => [k, process.env[k]]));
-      return { content: [{ type: "text", text: JSON.stringify({
-        cwd: process.cwd(), node: process.version, platform: process.platform,
-        output_dir: output.getOutputDir(), allow_inline_large: allowInlineLarge,
-        env: safeEnv,
-      }, null, 2) }] };
-    }
-    // App-specific tool cases go here:
     // case "<app>_<action>": { ... }
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
 }
+
+// -- Start --------------------------------------------------------------------
+await startServer({ meta: META, tools: APP_TOOLS, handleTool, output });
 ```
 
-### Server wiring
-
-```js
-const server = new Server(
-  { name: `${META.app}`, version: "1.0.0" },
-  { capabilities: { tools: {} } }
-);
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: assembleTools() }));
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  try {
-    return await handleTool(name, args);
-  } catch (err) {
-    return {
-      content: [{ type: "text", text: JSON.stringify({ error: true, message: err.message }) }],
-      isError: true,
-    };
-  }
-});
-
-const transport = new StdioServerTransport();
-await server.connect(transport);
-console.error(`${META.app} v1.0.0 running`);
-```
-
-**Critical: stdout vs stderr.** stdout is the MCP JSON-RPC channel — all communication between the server and the client happens over it. Any stray `console.log()` will corrupt the protocol and cause parse errors. **All logging must use `console.error`**: debug messages, auth status, error traces, progress indicators. This is the most common cause of "MCP server not responding" issues.
+**Critical: stdout vs stderr.** stdout is the MCP JSON-RPC channel. Any stray `console.log()` corrupts the protocol. **All logging must use `console.error`.**
 
 ## Copying Bundled Scripts
 
-Copy template scripts from the skill's `scripts/` directory. **Which scripts to copy depends on the auth and API classification from Stage 2:**
+Copy template scripts from the skill's `scripts/` directory:
 
 | Script | Destination | When |
 |--------|------------|------|
+| `server.js` | `server/server.js` | Always |
 | `auth.js` | `server/auth.js` | Cookie-auth apps (default) |
 | `output.js` | `server/output.js` | Always |
 | `graphql.js` | `server/graphql.js` | Only if app uses GraphQL |
@@ -182,6 +83,10 @@ Copy template scripts from the skill's `scripts/` directory. **Which scripts to 
 | `test-tool.sh` | `test/test-tool.sh` | Always |
 
 After copying, call `auth.init(META.app)` and `output.init(META.app)` in index.js at startup. This sets cookie dir to `~/.diy-mcp/<app>/cookies/` and output dir to `~/.diy-mcp/<app>/output/`.
+
+### API-key-auth apps
+
+If Stage 2 classified the app as **api-key-auth**, do not copy `auth.js` or add `ws` to dependencies. Use a simple fetch helper that reads the key from an env var. See `patterns/api-key-auth.md` for the full pattern. The server still uses `server.js` and `output.js` as normal.
 
 ### SPA-token-auth apps
 
@@ -302,6 +207,10 @@ Use a browser tool's snapshot/read-page feature to understand the DOM structure 
 
 Internal APIs often leak database-level representations that their own frontend silently converts. Common examples: PostgreSQL range literals (`"['2026-04-11T05:20:19Z','2026-04-11T16:10:33Z')"`), durations in raw milliseconds (`"quality_duration": 35863690`), Java/Kotlin enum names (`"SLEEP_STAGE_REM"`), and serialized compound types. Always convert these to human-readable values in tool responses — ISO dates, labeled durations (`hours: 9.96`), readable strings. The MCP tool is the "frontend" for these APIs.
 
+### Date range parameters
+
+`new Date("2026-04-10")` creates UTC midnight, but `setHours(23, 59, 59, 999)` sets hours in **local time** — mixing them silently narrows date ranges. When tool parameters are date-only strings, always construct with explicit UTC: `new Date(args.start_date + "T00:00:00.000Z")` and `new Date(args.end_date + "T23:59:59.999Z")`.
+
 ### SSO apps with pre-auth cookies
 
 For apps that set cookies before SSO completes (analytics, CSRF tokens), use `validateFn` to confirm real auth:
@@ -347,7 +256,7 @@ Use `set_output_dir` to control where file output is written. By default, files 
 
 ## Stage 5.5: Auth Smoke Test
 
-Before writing all tool handlers, make a single authenticated API call to verify auth works:
+Before writing all tool handlers, make a single authenticated API call to verify auth works. **Run this in the foreground with stderr visible** — the first run opens Chrome for SSO login. Tell the user: *"A Chrome window will open — log in there and I'll capture the cookies."*
 
 ```bash
 # Add a temporary test in index.js or run inline:
@@ -360,6 +269,20 @@ const r = await auth.authFetch('https://<domain>/api/me', {
 console.error(r.status, r.body?.substring?.(0, 200));
 "
 ```
+
+**For api-key-auth apps**, the smoke test is simpler — just verify the env var is read and a basic API call succeeds:
+
+```bash
+export <APP>_API_KEY="<key>"
+node -e "
+const r = await fetch('https://<domain>/api/endpoint', {
+  headers: { Authorization: 'Bearer ' + process.env.<APP>_API_KEY }
+});
+console.error(r.status, (await r.text()).substring(0, 200));
+"
+```
+
+**Shell gotcha:** `VAR=val cmd1 | cmd2` sets the var only for `cmd1`, not `cmd2`. Use `export` before pipelines so the var is available to all subprocesses.
 
 If this fails with 401 or returns an HTML login page:
 - **Cookie-auth:** Check that `validateFn` is configured to avoid pre-auth cookie capture

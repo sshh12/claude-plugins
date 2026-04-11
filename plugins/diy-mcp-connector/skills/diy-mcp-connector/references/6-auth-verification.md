@@ -1,6 +1,27 @@
 # Stage 6: Auth Verification
 
-Run the auth verification procedure matching your app's classification from Stage 2. Cookie-auth apps use Tests 1-4 below. **SPA-token-auth apps** use the alternative test procedure in `patterns/spa-token-auth.md` (fresh token, token reuse, token expiry, header format tests). Each test must pass before proceeding.
+Run the auth verification procedure matching your app's classification from Stage 2. **API-key-auth apps** use the simplified procedure below (no browser tests needed). Cookie-auth apps use Tests 1-4 below. **SPA-token-auth apps** use the alternative test procedure in `patterns/spa-token-auth.md` (fresh token, token reuse, token expiry, header format tests). Each test must pass before proceeding.
+
+## API-Key Auth Verification
+
+For apps classified as `api-key-auth`, run three checks:
+
+```bash
+# 1. Valid key — should return a successful response
+<APP>_API_KEY="<key>" ./test/test-tool.sh <app>_<tool> '{}'
+
+# 2. Missing key — should error with a clear message, not crash
+./test/test-tool.sh <app>_<tool> '{}'
+
+# 3. Invalid key — should return the API's error (401/403), not crash
+<APP>_API_KEY="invalid" ./test/test-tool.sh <app>_<tool> '{}'
+```
+
+Use `export` if piping — inline `VAR=val cmd1 | cmd2` only sets the var for `cmd1`. See Stage 5 smoke test note.
+
+If all three behave correctly, proceed to Stage 7. The remaining tests below are for cookie/token-auth apps only.
+
+---
 
 ## Test 1: Fresh Login
 
