@@ -65,7 +65,7 @@ async function startServer({ meta, tools, handleTool, output }) {
       }
       case `${meta.app}_debug_env`: {
         const safeEnv = Object.fromEntries(
-          SAFE_ENV_KEYS.filter((k) => k in process.env).map((k) => [k, process.env[k]])
+          Object.keys(process.env).filter((k) => SAFE_ENV_KEYS.includes(k) || k.startsWith("CLAUDE")).map((k) => [k, process.env[k]])
         );
         return {
           content: [{
