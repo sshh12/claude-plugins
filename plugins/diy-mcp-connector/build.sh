@@ -4,6 +4,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Sync version from plugin.json (source of truth) into package.json
+PLUGIN_VERSION=$(node -e "process.stdout.write(require('./.claude-plugin/plugin.json').version)")
+PKG_VERSION=$(node -e "process.stdout.write(require('./package.json').version)")
+if [ "$PLUGIN_VERSION" != "$PKG_VERSION" ]; then
+  node -e "
+    const fs = require('fs');
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    pkg.version = '$PLUGIN_VERSION';
+    fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+  "
+  echo "Synced version: $PKG_VERSION → $PLUGIN_VERSION"
+fi
+
 OUT_DIR="skills/diy-mcp-connector/scripts"
 mkdir -p "$OUT_DIR"
 

@@ -1,6 +1,6 @@
 {
   "name": "diy-mcp-connector",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Guides Claude through building a dedicated MCP server for any web app, from API discovery through testing and deployment",
   "author": {
     "name": "shrivu"
