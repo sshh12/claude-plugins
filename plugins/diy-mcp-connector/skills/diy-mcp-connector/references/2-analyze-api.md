@@ -46,6 +46,9 @@ These are the core workflows. Endpoints called many times across the HAR (or tha
 - Medium (8-50KB): may need `limit` parameters or field filtering
 - Large (>50KB): must use `resource_link` (file-based) responses
 
+### Pagination pattern
+Identify how list endpoints paginate — compare the first page request to subsequent ones. Common patterns: `?page=2`, `?offset=20`, `?cursor=<token>`, `?after=<id>`, or GraphQL `pageInfo { endCursor hasNextPage }`. Note which pattern each list endpoint uses — the tool handler needs to match it.
+
 ### Related endpoint groups
 Endpoints that serve a single user workflow should be consolidated into one tool. Example: if viewing a project requires `/projects/:id` + `/projects/:id/members` + `/projects/:id/activity`, that is one `get_project` tool, not three.
 
@@ -77,10 +80,15 @@ Some apps have a documented public API on a different domain from what the brows
 
 | Approach | Setup | Pros | Cons |
 |----------|-------|------|------|
-| Public API (OAuth2/API key) | Credentials required | Full structured access, documented, stable | User must set up credentials |
-| Internal APIs (cookie auth) | None — browser login | No setup, works immediately | Undocumented, may lack write/edit endpoints, can break without notice |
+| Public API (OAuth2/API key) | Credentials required | Full structured access, documented, stable | User must set up credentials; enterprise orgs may block OAuth2 consent for third-party apps |
+| Internal APIs (cookie auth) | None — browser login | No setup, works immediately | Undocumented, may lack write/edit endpoints, can break without notice; not all services have internal API endpoints |
+| Browser automation (CDP) | None — browser login | Works when both API paths are blocked; uses the same auth the user already has | Slower, fragile to UI changes, limited to what the web UI exposes |
 
-If the user picks cookie-based internal APIs, classify as **cookie-auth** and build against the internal endpoints. If they pick OAuth2, classify as **api-key-auth** (or a custom OAuth2 flow) and build against the public API.
+**Note:** Not all services within the same platform have the same internal API availability. For example, Google Drive has internal endpoints (`clients6.google.com`) that accept cookies, but Gmail does not — its API requires OAuth2 exclusively. Test each service independently.
+
+If OAuth2 is the only API path and credentials may be blocked by enterprise policy, offer browser automation as a fallback upfront — don't wait until OAuth2 fails.
+
+If the user picks cookie-based internal APIs, classify as **cookie-auth** and build against the internal endpoints. If they pick OAuth2, classify as **api-key-auth** (or a custom OAuth2 flow) and build against the public API. If browser automation, the build approach differs fundamentally (CDP page interaction instead of API calls).
 
 Do not build for one approach and then switch — the tool design, auth layer, and endpoints all differ.
 

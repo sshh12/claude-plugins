@@ -57,6 +57,7 @@ Do not stop after one feature area. If you only browse the settings page, you on
 - Search results
 - Dashboards or analytics
 - Any import/export features
+- **Pagination** — scroll or click "next page" on at least one list to capture how the app paginates (query params, cursor tokens, offset, etc.)
 
 A thin HAR leads to thin tools and requires a second capture round later.
 

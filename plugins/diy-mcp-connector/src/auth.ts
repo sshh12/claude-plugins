@@ -142,12 +142,30 @@ export function clearCookies(domain: string): void {
 
 /**
  * Launch Chrome with CDP enabled and open a URL. If Chrome is already running
- * with CDP, opens a new tab instead.
+ * with CDP, opens a new tab instead. Before launching a new Chrome, checks if
+ * a sibling diy-mcp app has a running Chrome on the same domain and reuses it.
  */
 export async function launchChrome(url: string): Promise<void> {
   const chromePath = findChrome();
   if (!chromePath) {
     throw new Error("Chrome not found. Install Google Chrome to enable auto-login.");
+  }
+
+  // Check if a sibling diy-mcp app has a running Chrome on the same domain.
+  // Apps under the same SSO umbrella (e.g. Google apps on .google.com) share
+  // cookies, so reusing their Chrome avoids an extra login.
+  if (!cdpPort) {
+    const siblingPort = await findSiblingCDP(url);
+    if (siblingPort) {
+      cdpPort = siblingPort;
+      console.error(`[auth] reusing sibling diy-mcp Chrome on port ${cdpPort}`);
+      try {
+        await fetch(`http://127.0.0.1:${cdpPort}/json/new?${encodeURIComponent(url)}`, {
+          signal: AbortSignal.timeout(5000),
+        });
+      } catch { /* ignore tab creation errors */ }
+      return;
+    }
   }
 
   // Kill stale Chrome processes using the same data directory.
@@ -518,6 +536,51 @@ function findChrome(): string | null {
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
+
+/**
+ * Scan sibling diy-mcp apps for a running Chrome on the same root domain.
+ * Returns the CDP port if found, null otherwise.
+ */
+async function findSiblingCDP(targetUrl: string): Promise<number | null> {
+  const diyMcpDir = path.join(os.homedir(), ".diy-mcp");
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(diyMcpDir);
+  } catch {
+    return null;
+  }
+
+  // Extract root domain (e.g. "google.com" from "docs.google.com")
+  const targetHost = new URL(targetUrl).hostname;
+  const targetRoot = targetHost.split(".").slice(-2).join(".");
+
+  for (const entry of entries) {
+    if (entry === APP_NAME) continue;
+    const portFile = path.join(diyMcpDir, entry, "chrome-data", "DevToolsActivePort");
+    try {
+      const content = fs.readFileSync(portFile, "utf-8");
+      const port = parseInt(content.split("\n")[0], 10);
+      if (!port || isNaN(port)) continue;
+
+      // Verify the CDP port is actually alive
+      const resp = await fetch(`http://127.0.0.1:${port}/json`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      const pages = (await resp.json()) as CDPPage[];
+
+      // Check if any open page shares the same root domain
+      if (pages.some((p) => {
+        try { return new URL(p.url).hostname.endsWith(targetRoot); } catch { return false; }
+      })) {
+        console.error(`[auth] found sibling Chrome (${entry}) on port ${port} with ${targetRoot} pages`);
+        return port;
+      }
+    } catch {
+      continue;
+    }
   }
   return null;
 }

@@ -101,4 +101,4 @@ for line in sys.stdin:
 
 ## Gate Condition
 
-**All three subagents report pass. Aggregated results in `<app>/test/results.md` reported to user.**
+**All three subagents report pass. Aggregated results in `<app>/test/results.md` reported to user. Do not skip to Stage 9 (install) — testing must complete and pass before offering installation.**

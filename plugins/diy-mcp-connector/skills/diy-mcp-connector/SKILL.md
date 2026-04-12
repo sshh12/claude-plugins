@@ -143,7 +143,7 @@ See `references/7-test.md`
 - [ ] Aggregate results from all subagents into `<app>/test/results.md`
 - [ ] Evaluate: accuracy, tool call count, token usage, error frequency
 
-**Gate:** All subagents report pass. Aggregated results reported to user.
+**Gate:** All subagents report pass. Aggregated results reported to user. **Do not proceed to Stage 8 or 9 until all tests pass.**
 
 ---
 
@@ -159,6 +159,8 @@ See `references/8-optimize.md`
 ---
 
 ## Stage 9: Package & Connect
+
+**Do not start this stage until Stages 7 and 8 are complete.** Testing must pass before installation.
 
 See `references/9-package-connect.md`
 

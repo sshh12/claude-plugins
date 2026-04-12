@@ -235,6 +235,9 @@ When intercepting requests via CDP (`Network.requestWillBeSent`) to capture auth
 - **Cookie header is never in `requestWillBeSent`** — the browser adds it automatically. Capture cookies separately via `Network.getCookies` and merge manually.
 - **Origin header context matters** — in-browser requests may be same-origin (no `Origin` sent). Replaying from Node.js with an `Origin` header can cause 400 errors. Strip it unless the original request explicitly included it.
 - **SSO redirects reset the page** — if Chrome navigates to a login page and back, CDP listeners set up before the redirect may miss post-login network events. Monitor `Page.frameNavigated` to detect when the user returns from login, then start capturing.
+- **Use `Input.dispatchKeyEvent` for keyboard interaction, not JS `dispatchEvent`** — modern web apps (Gmail, Slack, etc.) use custom event systems that ignore synthetic JS keyboard events. CDP-level input simulation (`Input.dispatchKeyEvent`) sends real OS-level key presses that frameworks cannot distinguish from user input.
+- **Same-domain apps should share Chrome profiles** — apps under the same SSO umbrella (e.g. all Google apps on `.google.com`) should reuse an existing Chrome data dir rather than launching a fresh profile. The `auth.js` template handles this automatically — it checks `~/.diy-mcp/*/chrome-data` for a running sibling Chrome on the same root domain before launching a new one.
+- **SPAs keep stale elements in the DOM** — single-page apps (Gmail, Slack, Notion) often keep previous view elements hidden in the DOM. `querySelector` returns the first match, which may be invisible. Always filter for visible elements: `Array.from(document.querySelectorAll(selector)).find(el => el.offsetHeight > 0)`.
 
 ## package.json Generation
 

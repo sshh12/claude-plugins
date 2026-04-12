@@ -82,6 +82,20 @@ async function launchChrome(url) {
   if (!chromePath) {
     throw new Error("Chrome not found. Install Google Chrome to enable auto-login.");
   }
+  if (!cdpPort) {
+    const siblingPort = await findSiblingCDP(url);
+    if (siblingPort) {
+      cdpPort = siblingPort;
+      console.error(`[auth] reusing sibling diy-mcp Chrome on port ${cdpPort}`);
+      try {
+        await fetch(`http://127.0.0.1:${cdpPort}/json/new?${encodeURIComponent(url)}`, {
+          signal: AbortSignal.timeout(5e3)
+        });
+      } catch {
+      }
+      return;
+    }
+  }
   if (CHROME_DATA_DIR && !cdpPort) {
     try {
       execSync(`pkill -f "user-data-dir=${CHROME_DATA_DIR.replace(/"/g, '\\"')}"`, {
@@ -340,6 +354,43 @@ function findChrome() {
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
+  }
+  return null;
+}
+async function findSiblingCDP(targetUrl) {
+  const diyMcpDir = path.join(os.homedir(), ".diy-mcp");
+  let entries;
+  try {
+    entries = fs.readdirSync(diyMcpDir);
+  } catch {
+    return null;
+  }
+  const targetHost = new URL(targetUrl).hostname;
+  const targetRoot = targetHost.split(".").slice(-2).join(".");
+  for (const entry of entries) {
+    if (entry === APP_NAME) continue;
+    const portFile = path.join(diyMcpDir, entry, "chrome-data", "DevToolsActivePort");
+    try {
+      const content = fs.readFileSync(portFile, "utf-8");
+      const port = parseInt(content.split("\n")[0], 10);
+      if (!port || isNaN(port)) continue;
+      const resp = await fetch(`http://127.0.0.1:${port}/json`, {
+        signal: AbortSignal.timeout(2e3)
+      });
+      const pages = await resp.json();
+      if (pages.some((p) => {
+        try {
+          return new URL(p.url).hostname.endsWith(targetRoot);
+        } catch {
+          return false;
+        }
+      })) {
+        console.error(`[auth] found sibling Chrome (${entry}) on port ${port} with ${targetRoot} pages`);
+        return port;
+      }
+    } catch {
+      continue;
+    }
   }
   return null;
 }

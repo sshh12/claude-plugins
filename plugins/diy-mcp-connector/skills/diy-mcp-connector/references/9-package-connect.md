@@ -1,5 +1,7 @@
 # Stage 9: Package & Connect
 
+**Prerequisite:** Stages 7 (Test) and 8 (Optimize) must be complete before installing. Do not skip testing.
+
 The connector you built runs anywhere that supports MCP servers. This stage covers connecting to the most common targets: Claude Code, Claude Desktop (Cowork), OpenClaw, and other MCP clients.
 
 **Important:** Even if you're running inside Claude Code, always ask the user if they'd like help connecting the server to other tools too — e.g. *"I've added the server to Claude Code. Would you also like me to set it up for Cowork, OpenClaw, or any other MCP client?"* Most users have more than one MCP-capable tool and will appreciate the offer.
