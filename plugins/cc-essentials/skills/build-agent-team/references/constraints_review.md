@@ -22,6 +22,7 @@ Flag if:
 - A class of mutation on an agent-managed resource isn't classified as permitted / approval / forbidden.
 - The classification conflicts with a role's mandate.
 - Destructive operations on agent-managed resources lack an emergency-only carve-out.
+- File system writes outside the repo or `/tmp/` aren't forbidden — these trigger operator permission prompts that block autonomous operation indefinitely.
 
 ### 2. Budget allocations have caps, trackers, and throttles
 

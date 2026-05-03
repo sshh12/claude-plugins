@@ -30,6 +30,8 @@ Instead, split by **closing loops** — verticals of work where one role takes a
 
 Two roles never get cut: a **leader** and at least one **auditor**. Everything else is loops, often including at least one platform loop.
 
+State each loop as an **input → closed-output** relationship: what signal enters the role's domain, and what "handled" looks like for that signal. Don't state loops as step sequences — those are workflows, not loops. Workflows go in critical behaviors and can evolve; the loop description is the role's accountability, not its procedure. "Cold inbound contact → cleared inbox per playbook" is a loop. "Scan inbox → triage → draft → send" is a workflow.
+
 ## When NOT to build a team
 
 - The work fits in one session — don't split unless loops genuinely run in parallel.
@@ -64,7 +66,7 @@ Open with the problem, not roles:
 - Which goals are recurring metrics vs. open-ended problem domains?
 - What inputs does it consume, what outputs does it produce, where does it hand back to humans?
 
-From the answers, **propose** a loop decomposition. Confirm with the user before naming any role. If the user volunteers role names first, gently redirect: "Before we name roles, what loops are we closing?" Anthropomorphic splits are the default human instinct and you have to push against it.
+From the answers, **propose** a loop decomposition. State each loop as input → closed-output, not as a step sequence. Confirm with the operator before naming any role. If the operator volunteers role names first, gently redirect: "Before we name roles, what loops are we closing?" Anthropomorphic splits are the default human instinct and you have to push against it.
 
 Then push for **platform/derivative loops the user may not have considered**. For each executor loop in the proposed decomposition, ask: *what's improving over time, and who owns that improvement?* Skills, prompts, memory files, shared codebases, context curation, tools — these go stale or stay flat without a dedicated owner. The pattern: a researcher who improves the executor's prompt; a librarian who curates context; a platform engineer who refactors shared tooling so other loops move faster. Without these roles, the team peaks at week one and degrades.
 
@@ -85,7 +87,7 @@ This section is the team's compass for weeks of autonomous operation. Get it rig
 
 For each loop, gather:
 
-- **Loop**: one sentence — what cycle does this role close?
+- **Loop**: one sentence as input → closed-output — what signal enters the role's domain, and what does "handled" look like? Not the steps in between; those are critical behaviors.
 - **Decision principles** (3 bullets): how this role makes calls, what trade-offs it prioritizes, what it values over what. Keep these concise — they're the role's compass when the situation is novel.
 - **Critical behaviors**: must-do operational rules — mandatory message triggers, pre-checks, artifacts to produce. Each behavior should prevent a specific failure mode. Every role must re-check the time CLI against its cadence between units of work — `CronCreate` fires only on idle, so a busy role drifts otherwise.
 - **Cron cadence**: how often this role self-pings to re-check state. Err toward more frequent — agents can't track time on their own.
@@ -144,6 +146,7 @@ If no out-of-terminal channel is set up, say so explicitly in the skill: "Operat
 Hard guardrails that override role judgment:
 
 - **Resource ownership**: classify each shared resource (git, deployments, secrets, external accounts, financial state, customer-visible state, third-party APIs) as agent-managed or operator-managed. For agent-managed resources, further classify mutations as permitted / operator-approval / forbidden. Default toward operator-managed for high-blast-radius resources unless the operator opts in — git is the most common case, where teams typically keep commit/push/branch operator-managed and let agents make working-tree changes only. Default, not hard rule.
+- **File system writes**: keep writes inside the repo or `/tmp/`. Writes elsewhere (home directory, system paths, sibling repos) trigger operator permission prompts that block the team — long-running autonomous operation depends on every write landing in a pre-approved location.
 - **Budget allocations**: for every consumable the team draws from — tokens, real-money spend, paid API quotas, third-party rate limits, compute — set a cap, a tracker, and a throttle. Don't reduce this to just tokens; long-running teams usually have several bounded resources.
 - **Time-based access**: for resources that can't be accessed concurrently (shared file system regions, exclusive external state, infra in transitional states, prioritized budget windows), specify who grants access and how. Platform-change "stability windows" are one instance — treat the general pattern explicitly.
 - **Time and reality checks**: name the authoritative CLIs for time and state — agents cannot self-track time or external state.
@@ -178,9 +181,14 @@ Concrete thresholds belong to the user; the skill records the principle.
 
 ### 10. Memory
 
-If the repo has a memory pattern, extend it. If not, suggest `memory/<ROLE>.md` (uppercase) at repo root, one file per role, accumulating durable lessons that change future decisions — not transcripts, not status snapshots.
+Durable team learning takes several forms — settle which fit this team:
 
-Every role re-reads its memory file at the start of each loop iteration, not just on startup. Write-only memory is useless. Audit findings, operator overrides, and observed failures must produce memory or prompt updates — not just one-off fixes.
+- **Per-role memory files** (default). `memory/<ROLE>.md` (uppercase), one per role. Best when lessons are role-specific.
+- **Cross-cutting memory** — organized by platform, domain, task type, or repo when lessons fall along those lines better than by role. Use the existing repo pattern if one exists.
+- **Skills as memory** — when a role's primary work is running a specific skill, lessons accumulate via edits to that skill rather than a separate file. Platform/derivative loops typically work this way: their closing loop *is* improving the skills other roles use.
+- **The team skill itself (the constitution)** — `/start-<team>-team` is the team's operating constitution. The leader owns mutations to it. The auditor and other roles can propose edits, but only the leader applies them. This is how the team evolves its own philosophy, roles, comms, or constraints when situations require it.
+
+Every role re-reads its memory at the start of each loop iteration, not just on startup. Audit findings, operator overrides, and observed failures must produce memory or prompt updates — not just one-off fixes.
 
 Also settle the **team-status artifact** — a single file the leader updates on each leadership-loop iteration so the operator (and any new or respawned teammate) can catch up at a glance. Extend the repo's existing dashboard pattern if one exists; otherwise suggest a top-level `team-status.md`.
 
@@ -191,6 +199,8 @@ Default: `<repo>/.claude/skills/start-<team>-team/SKILL.md` — project-local, c
 ## Drafting the skill
 
 After the interview, draft `/start-<team>-team`. Use `references/skill_template.md` as a section checklist. The generated skill must be self-contained — every teammate reads it as their full brief.
+
+**Push heavy content into the generated skill's `references/` folder, not the main body.** Memory file templates (one per role), status artifact templates, role-specific reference docs, and any other boilerplate go in `<generated-skill>/references/` and are pointed to from the body by absolute path. The body holds operating logic and decision rules; references hold the format scaffolding teammates only need to read on first boot. Every teammate re-reads the body on each orientation — keeping it lean is what makes long-running teams affordable.
 
 Required sections, in order:
 

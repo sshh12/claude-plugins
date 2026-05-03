@@ -17,6 +17,7 @@ Each role must own a recurring cycle from problem to closed solution. The loop i
 Flag if:
 - A role has no recurring cycle — it just executes tasks the leader hands it.
 - A role's "loop" is a label without a clear input → close-the-loop output.
+- The loop is stated as a step sequence (a workflow: "scan → filter → draft → send") rather than as an input → closed-output relationship. Step sequences belong in critical behaviors; the loop is the role's accountability for an outcome.
 - Two roles claim the same loop.
 - A loop is split across multiple roles unnecessarily (cross-domain judgment isn't actually too wide).
 

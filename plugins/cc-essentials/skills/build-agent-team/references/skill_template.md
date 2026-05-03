@@ -80,7 +80,9 @@ The leader, additionally:
 
 **Stop conditions**: Propose shutdown to the operator when any of `<stop conditions>` are met (goal achieved, budget exhausted, audit finding invalidates the strategy, regime change). Evaluate on each leadership-loop iteration.
 
-**Status artifact**: Update `<team-status path>` on each leadership-loop iteration with current focus, decisions since last update, open `[DECISION NEEDED]` queue, anomalies, budget burn, last audit finding. The operator reads this first on return; new or respawned teammates read it for catch-up.
+**Status artifact**: Update `<team-status path>` on each leadership-loop iteration. Format lives at `references/status_template.md` in this skill's folder. The operator reads this first on return; new or respawned teammates read it for catch-up.
+
+**Constitution**: this skill is the team's operating constitution. Apply edits to it when the team needs to evolve its philosophy, roles, comms, or constraints. The auditor and other roles propose changes by messaging you; only you apply.
 
 ### <Executor 1>
 
@@ -167,11 +169,17 @@ These are principles, not recipes. The leader applies judgment within them.
 
 ## Memory
 
-Each role has a memory file at `<memory/ROLE.md>` (or the existing repo pattern). Memory accumulates durable lessons that change future decisions — not transcripts, not status snapshots.
+Durable team learning lives in several places:
 
-- Every role re-reads its memory file at the start of each loop iteration, not just on spawn.
+- **Per-role memory files** at `<memory/ROLE.md>` — role-specific lessons. Templates live at `references/memory_<role>.md` in this skill's folder; each role seeds its memory file from the template on first boot.
+- **Skills the role runs** — for roles whose primary work is running a specific skill, lessons accumulate as direct edits to the skill, not a separate file. Platform/derivative roles work this way by default.
+- **The team skill (this file)** — `/start-<team>-team` is the team's constitution. Only the leader applies edits; the auditor and other roles propose changes by messaging the leader.
+
+Common rules:
+
+- Every role re-reads its memory at the start of each loop iteration, not just on spawn.
 - The leader may read all memory files.
-- Each role updates its own memory file when learning something that would change a future decision in this loop.
+- Each role updates its own memory when learning something that would change a future decision.
 - Memory entries are short, principled, and standalone — readable months later without conversation context.
 
 ## Spawning
