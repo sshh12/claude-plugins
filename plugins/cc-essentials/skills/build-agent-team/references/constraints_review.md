@@ -6,85 +6,92 @@ Your job is to verify the constraints are complete, unambiguous, and actually en
 
 ## Review criteria
 
-### 1. Git is locked down by default
+### 1. Resource ownership and mutation classification
 
-For most teams, no agent should commit, push, branch, force-push, or modify git history. Working-tree changes only, surfaced for human review.
+Every shared resource the team touches should be classified by **ownership** — agent-managed (the team owns operations on it) or operator-managed (the team can read or propose, but the operator owns mutations). For agent-managed resources, classify each mutation class as permitted, requires-operator-approval, or forbidden. This is the foundation other constraints build on; without it, every individual mutation gets re-litigated.
 
-Flag if:
-- Git commit/push permissions are unclear.
-- Any role implicitly has write access to git (creating PRs, merging) without explicit authorization in the constraints.
-- The constraints permit destructive git operations (`reset --hard`, force-push, branch deletion) without an emergency-only carve-out.
+Resources commonly worth classifying: git history, deployments and infra, secrets and credentials, external service accounts, customer-visible state, financial accounts, third-party APIs.
 
-### 2. Budget has a cap, a tracker, and a throttle
-
-A long-running team consumes tokens linearly. The constraints must specify:
-- Hard cap (per week or per cycle).
-- Who tracks spend and how (typically aggregated by the leader from per-role estimates in messages).
-- What throttles when approaching the cap (cheaper models, fewer iterations, pause non-essential roles).
+Default toward operator-managed for high-blast-radius resources unless the operator has explicitly opted in. Git is the canonical case — most teams keep commit/push/branch operator-managed and let agents make working-tree changes only, because git is the team's primary review and rollback lever. But this is a default to lean toward, not a hard rule. Some teams want agents committing on feature branches or running automated PR flows, and the constraints should reflect what the operator actually wants.
 
 Flag if:
-- No budget cap is named.
+- A class of resource isn't classified.
+- Classification is implicit or vague — soft language without naming what specific operations agents can perform.
+- A role implicitly has authority over a resource that isn't authorized in this section.
+- The team interacts with a high-blast-radius resource where operator-managed wasn't at least considered as the default.
+- A class of mutation on an agent-managed resource isn't classified as permitted / approval / forbidden.
+- The classification conflicts with a role's mandate.
+- Destructive operations on agent-managed resources lack an emergency-only carve-out.
+
+### 2. Budget allocations have caps, trackers, and throttles
+
+A long-running team consumes bounded resources — not just LLM tokens. The team likely draws from several consumable budgets: tokens, financial spend (real money the team moves), paid API call quotas, third-party rate limits, compute time, anything else with a cap. Each one needs:
+
+- **Cap** — how much, over what window.
+- **Tracker** — who's measuring consumption and how. Typically aggregated by the leader from per-role estimates in messages.
+- **Throttle** — what slows or pauses when approaching the cap (cheaper models, fewer iterations, paused non-essential roles, smaller batch sizes).
+
+Flag if:
+- A consumable resource the team uses isn't budgeted at all.
+- The constraints cover only tokens when other consumables are clearly in play (e.g., real-money spend, paid API quotas, rate-limited external services).
 - A cap is named but no tracking mechanism exists.
-- No throttling rule — just stops at the cap, which loses in-flight work.
-- Per-role messages don't include token-spend estimates feeding the tracker.
+- No throttling rule — just stops at cap, losing in-flight work.
+- Per-role messages don't include consumption estimates feeding the trackers (where applicable).
 
-### 3. State mutations are classified
+### 3. Time-based resource access is defined
 
-Any action that mutates external state (real money, external comms, file deletion, infra changes, customer-visible writes) must be classified as either:
-- Permitted within constraints.
-- Requires human approval.
-- Forbidden.
+This generalizes the "stability window" pattern. When a shared resource can't be accessed concurrently — a shared file system being modified, an external API with serialization requirements, infra in a transitional state, exclusive locks on real-world systems, a budget window where one role gets priority — the constraints must specify who gets access when, and how it's coordinated. Platform-change windows are one instance of this; treat it as the general case.
 
-Flag if:
-- A class of mutation isn't addressed.
-- The classification is ambiguous (e.g., "important changes need approval" without naming what's important).
-- The classification conflicts with a role's mandate (e.g., a trader role can't trade, a deployer role can't deploy).
+The constraints should specify, per shared resource that needs exclusive or prioritized access:
 
-### 4. Stability windows are defined
-
-When platform-modifying roles ship changes, other roles must not be mid-task on dependent state. The constraints should specify when changes are permitted and who grants the window.
+- Whether access is concurrent, exclusive, or prioritized (one role first, others after).
+- Who grants access windows (default: leader).
+- How requests and grants are recorded so other roles can see the current state.
+- Emergency-fix carve-outs.
 
 Flag if:
-- Platform-modifying roles exist but no stability protocol is named.
-- The window grant authority is unclear (default: leader).
-- Emergency-fix carve-outs aren't addressed.
+- A resource needing exclusive or prioritized access isn't named.
+- "Be careful" or "take turns" is the protocol — that's not a protocol.
+- Grant authority is unclear or distributed (multiple roles can grant the same window).
+- Emergency carve-outs aren't addressed.
+- Budget allocations that are time-window'd (e.g., "trader gets priority on tokens during market hours") aren't connected to this section.
 
-### 5. Time and reality come from CLIs, not the agent
+### 4. Time and reality come from CLIs, not the agent
 
 Agents cannot self-track time, market hours, file state, or external system state. The constraints should name authoritative sources for facts the team relies on.
 
 Flag if:
-- Time-critical operations don't reference an authoritative time source (`date`, `alpaca clock`, etc.).
+- Time-critical operations don't reference an authoritative time source.
 - Roles are expected to "remember" what time it is or what state things were in.
 - External state checks aren't tied to specific commands or CLIs.
 
-### 6. Human-only is narrow and explicit
+### 5. Operator-only is narrow and explicit
 
-The constraints should enumerate human-only decisions. The list should be short — long lists indicate inadequate autonomy.
+The constraints should enumerate operator-only decisions. The list should be short — long lists indicate inadequate autonomy.
 
 Flag if:
-- Human-only is broad ("anything important", "strategic decisions").
-- Human-only includes things the leader could decide within budget and philosophy.
-- Human-only is missing for genuinely irreversible actions (real-money limits, mass external comms, data deletion).
+- Operator-only is broad — uses soft categories instead of named actions.
+- Operator-only includes things the leader could decide within budget and philosophy.
+- Operator-only is missing for genuinely irreversible actions.
 
-### 7. The constraints actually enforce the philosophy's non-negotiables
+### 6. The constraints actually enforce the philosophy's non-negotiables
 
 Every non-negotiable from the philosophy section should have a corresponding constraint that operationalizes it. A non-negotiable without an enforcement mechanism is aspiration, not guardrail.
 
 Flag if:
 - A philosophy non-negotiable has no operational constraint.
-- A constraint contradicts a non-negotiable (e.g., "never do X" but constraints permit X under condition Y).
+- A constraint contradicts a non-negotiable.
 - Constraints exist that don't trace back to a stated principle or non-negotiable — these often indicate scope creep or unstated assumptions.
 
-### 8. Conflict resolution between constraints
+### 7. Conflict resolution between constraints
 
-When two constraints could conflict (e.g., budget cap vs. mandatory cadence-ping; stability window vs. urgent fix), the precedence should be clear.
+When two constraints could conflict, the precedence should be clear.
 
 Flag if:
 - Two constraints could fire simultaneously with no precedence rule.
 - "Use judgment" is the resolution — constraints exist precisely because judgment isn't trusted on this axis.
 
-### 9. Constraints are visible to every role
+### 8. Constraints are visible to every role
 
 Every role should reference the constraints in their init protocol or critical behaviors, not just the leader.
 

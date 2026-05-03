@@ -9,6 +9,8 @@ Designs a long-running agent team for the current project and writes a `/start-<
 
 A team is not a workflow — it is an organization that runs while you sleep. Every design decision in this skill is about making sure that organization stays pointed at the right thing without supervision.
 
+Throughout this skill, "the operator" means the human admin running and supervising the team — the person who built and started it, the person it escalates to. This is distinct from any other humans the team may interact with as part of its work (customers, end users, external contacts), which we call out as such when relevant.
+
 ## What an agent team is (and isn't)
 
 A team is several Claude Code instances coordinating around a shared goal. Each teammate owns a **closing loop** — a recurring cycle from problem to closed solution. Teammates message each other directly; the lead coordinates without relaying every message.
@@ -17,15 +19,16 @@ Different from subagents (one-shot, report back to caller) and skills (encode a 
 
 ## Design teams around closing loops, not specialties
 
-The biggest design mistake is anthropomorphizing a human org chart — "senior dev agent, QA agent, designer agent, PM agent." Human orgs split that way because of skill specialization. A single Claude instance is already broadly multi-domain, so splitting along functional lines mostly adds coordination overhead and handoff loss.
+The biggest design mistake is anthropomorphizing a human org chart. Human orgs split by skill specialization; a single Claude instance is already broadly multi-domain, so splitting along functional lines mostly adds coordination overhead and handoff loss.
 
-Instead, split by **closing loops** — verticals of work where one role takes a problem from input to closed solution. Three loop shapes show up most:
+Instead, split by **closing loops** — verticals of work where one role takes a problem from input to closed solution. Loop shapes:
 
-- **Metric loop**: a number to drive (research → backtest → refine).
-- **Problem loop**: a system or domain to monitor and fix (infra issue → diagnose → ship → deploy).
-- **Leadership loop**: every team needs one — direction, budget, institutional memory, cross-loop arbitration.
+- **Metric loop**: a number the role drives.
+- **Problem loop**: a system or domain the role monitors and fixes.
+- **Leadership loop**: direction, budget, institutional memory, cross-loop arbitration.
+- **Platform (derivative) loop**: improves the skills, prompts, context, tooling, or memory that other loops depend on. The output isn't a primary work product — it's the substrate that makes the primary loops better over time. Without one, executor quality is bounded by initial setup.
 
-Two roles never get cut: a **leader** (CEO, director, captain — the name doesn't matter) and at least one **auditor** (see below). Everything else is loops.
+Two roles never get cut: a **leader** and at least one **auditor**. Everything else is loops, often including at least one platform loop.
 
 ## When NOT to build a team
 
@@ -46,7 +49,7 @@ Before asking anything:
 
 - Read `CLAUDE.md` for project conventions.
 - List skills in `.claude/skills/` and installed plugins — these become "key skills" for relevant roles.
-- Look for an existing memory pattern (`memory/`, `notes/`, `*_NOTES.md`, agent-specific files). If found, extend it. If not, plan to suggest `memory/<ROLE>.md` (uppercase) at repo root.
+- Look for existing memory and team-status patterns. Extend if found; otherwise plan to suggest `memory/<ROLE>.md` (uppercase) for per-role durable lessons, and a single team-status artifact the leader maintains for operator catch-up.
 - Note CLIs, scripts, and `Makefile` targets the team will lean on.
 
 Tell the user what you found before interviewing further. Don't make them describe their own repo.
@@ -61,13 +64,19 @@ Open with the problem, not roles:
 
 From the answers, **propose** a loop decomposition. Confirm with the user before naming any role. If the user volunteers role names first, gently redirect: "Before we name roles, what loops are we closing?" Anthropomorphic splits are the default human instinct and you have to push against it.
 
+Then push for **platform/derivative loops the user may not have considered**. For each executor loop in the proposed decomposition, ask: *what's improving over time, and who owns that improvement?* Skills, prompts, memory files, shared codebases, context curation, tools — these go stale or stay flat without a dedicated owner. The pattern: a researcher who improves the executor's prompt; a librarian who curates context; a platform engineer who refactors shared tooling so other loops move faster. Without these roles, the team peaks at week one and degrades.
+
+Add a platform loop when: (1) the team runs long enough that initial setup will go stale, (2) execution quality is sensitive to internal tooling and context the team controls, (3) signal from execution can feed improvements back, (4) there's actual surface area to improve — the existing skills, prompts, and context are not already mature and battle-tested. If the executor's setup is solid and the improvement surface is small, a platform loop just churns; skip it. Short-running teams and teams using externally-maintained tooling also don't need one. One level of derivative is usually enough; "the role that improves the role that improves X" is rarely worth the coordination cost.
+
+Finally, settle the **task list mechanism** — how teammates claim, track, and release units of work. Pick a concrete file or convention (e.g., a shared `TASKS.md` with claim/release rules, or whatever the existing repo pattern suggests). Without a mechanism, every teammate invents one and they collide.
+
 ### 2. Philosophy and guardrails
 
 This section is the team's compass for weeks of autonomous operation. Get it right.
 
 - **Strategy** — one paragraph on what the team believes about winning in this domain.
-- **Principles** — the dispositions every role inherits (e.g., "robustness over peak performance", "freshness over preparation").
-- **Reward-hacking traps** — for every metric the team optimizes, ask: *what does gaming this look like?* Encode the gaming pattern explicitly. If the team optimizes backtest scores, overfitting is the hack. If it optimizes PR throughput, shallow PRs are the hack. Naming the anti-pattern is more protective than naming the metric.
+- **Principles** — the opinionated trade-offs every role inherits. Each principle should imply behavior that would differ if it were inverted.
+- **Reward-hacking traps** — for every metric the team optimizes, ask: *what does gaming this look like?* Encode the gaming pattern explicitly. Naming the anti-pattern is more protective than naming the metric.
 - **Non-negotiables** — guardrails that override every role's judgment. Things the team must not do even when tempted.
 
 ### 3. Roles
@@ -76,17 +85,17 @@ For each loop, gather:
 
 - **Loop**: one sentence — what cycle does this role close?
 - **Decision principles** (3 bullets): how this role makes calls, what trade-offs it prioritizes, what it values over what. Keep these concise — they're the role's compass when the situation is novel.
-- **Critical behaviors**: must-do operational rules — mandatory message triggers, pre-checks, artifacts to produce. Each behavior should prevent a specific failure mode you and the user have discussed.
-- **Cron cadence**: how often this role self-pings to re-check state. Err toward more frequent — agents can't track time on their own. Typical: leader every 2–3h, executor every 1h while active, auditor on a fixed schedule the leader controls.
-- **Effort and model**: max effort + Opus for judgment-heavy roles (leader, auditor, primary researcher). Low effort + Sonnet/Haiku only when the role is provably mechanical (format compliance, dispatch, smoke tests). When uncertain, default to Opus + max — degrading is cheaper than a bad call by a underpowered role.
+- **Critical behaviors**: must-do operational rules — mandatory message triggers, pre-checks, artifacts to produce. Each behavior should prevent a specific failure mode. Every role must re-check the time CLI against its cadence between units of work — `CronCreate` fires only on idle, so a busy role drifts otherwise.
+- **Cron cadence**: how often this role self-pings to re-check state. Err toward more frequent — agents can't track time on their own.
+- **Effort and model**: max effort + Opus for judgment-heavy roles. Low effort + Sonnet/Haiku only when the role is provably mechanical. When uncertain, default to Opus + max — degrading is cheaper than a bad call by an underpowered role.
 - **Key skills**: skills already in the repo or the user's setup this role uses heavily. List name + one-line on how it's used. If a needed skill doesn't exist, flag it for the user to consider building separately.
 - **Color**: visual identity for the team config (blue/green/orange/purple/cyan/red/yellow).
 
-After roles are sketched, ask explicitly: **where do these roles step on each other?** Look for shared writable state, mutually exclusive work (e.g., one role can't run while another is mid-task), and racing on shared artifacts. For each overlap, decide upfront — tighter ownership, leader-granted stability windows, or a sequence lock — and bake it into the relevant roles' critical behaviors. Coordination designed upfront beats coordination invented mid-incident.
+After roles are sketched, ask explicitly: **where do these roles step on each other?** Look for shared writable state, mutually exclusive work, and racing on shared artifacts. For each overlap, decide upfront — tighter ownership, leader-granted stability windows, or a sequence lock — and bake it into the relevant roles' critical behaviors. Coordination designed upfront beats coordination invented mid-incident.
 
 ### 4. The leader (mandatory)
 
-Every team has exactly one leader. Naming varies (CEO, director, captain, lead — the name is cosmetic) but the role is not optional. The leader holds direction, budget, cross-loop arbitration, and institutional memory. The leader is also the only role with authority to escalate to the human, shut down or respawn teammates, and grant stability windows.
+Every team has exactly one leader. Naming is cosmetic — the role is not optional. The leader holds direction, budget, cross-loop arbitration, and institutional memory. The leader is also the only role with authority to escalate to the operator, shut down or respawn teammates, and grant stability windows.
 
 A team without a leader is a relay chain. A team with multiple leaders deadlocks. Insist on exactly one.
 
@@ -104,7 +113,7 @@ Decide with the user:
 - Cadence: how often does the leader summon the auditor, and what artifacts does the auditor receive?
 - Effort: always max + Opus.
 
-Multiple auditors are fine when failure modes are distinct (e.g., research-overfitting auditor + execution-risk auditor). Don't merge audit duties into the leader.
+Multiple auditors are fine when failure modes are distinct. Don't merge audit duties into the leader.
 
 ### 6. Communication protocol
 
@@ -115,25 +124,33 @@ For each ordered pair of roles, ask:
 - What does the message contain? (Lead with the action or decision needed; context after.)
 - What's the response timeline? What's "silent" mean for this pair?
 
-Also gather general principles: how to message (concise, action-first, full paths to artifacts, never structured JSON unless using protocol responses), and when to over-communicate (when in doubt, send).
+Also gather general principles: how to message (concise, action-first, full paths to artifacts, never structured JSON unless using protocol responses), and when to over-communicate (when in doubt, send). Apply the same to **feedback signals** — when one role observes something another loop could improve from (audit findings, operator overrides, corner cases hit during execution), route it to that loop. Feedback that stays where it lands is feedback the system loses.
 
 Then ask: **what state should live in shared artifacts instead of messages?** Heavy content (reports, plans, dashboards), long-lived state (current strategy, open task list), and cumulative knowledge (memory) belong in files at known paths, with lightweight "I updated `<path>`" notifications instead of full content in messages. Map out the artifact-and-notification pairs upfront — who writes, who reads, where the file lives, when notifications fire.
+
+Then nail down **operator-facing comms**, which is its own protocol distinct from internal team comms (and distinct from any operational comms the team has with other humans like customers or end users):
+
+- **Who talks to the operator?** Default: only the leader. Non-leader roles route everything operator-facing through the leader. Multiple roles pinging the operator directly creates noise and contradictory asks.
+- **When?** Tie to the autonomy boundary in step 8: decisions outside the boundary, periodic status digests, critical incidents that need awareness even without a decision.
+- **What channel?** Terminal chat is the default. If the team needs to reach the operator out-of-band, the skill must name a specific channel and the exact CLI/API call. Agents can't invent a channel that isn't already wired up.
+- **What format?** Operator messages must be self-contained (the operator lacks team context), severity-tagged, and link to artifacts rather than embed them.
+
+If no out-of-terminal channel is set up, say so explicitly in the skill: "Operator comms are terminal-only; the team waits for the operator's next session for non-urgent items."
 
 ### 7. Constraints
 
 Hard guardrails that override role judgment:
 
-- **Git**: who commits, who pushes, who branches. Default: nobody. Working-tree changes for human review.
-- **State / external systems**: which mutations require human approval (real money, external comms, data deletion).
-- **Budget**: weekly token cap. Who tracks it. What throttles when approaching the cap.
-- **Stability windows**: when can platform-changing roles ship. Default: never during active work by other roles.
-- **Time and reality checks**: which CLIs to use for ground truth (`date`, `alpaca clock`, `gh`, etc.) — agents cannot self-track time or external state.
+- **Resource ownership**: classify each shared resource (git, deployments, secrets, external accounts, financial state, customer-visible state, third-party APIs) as agent-managed or operator-managed. For agent-managed resources, further classify mutations as permitted / operator-approval / forbidden. Default toward operator-managed for high-blast-radius resources unless the operator opts in — git is the most common case, where teams typically keep commit/push/branch operator-managed and let agents make working-tree changes only. Default, not hard rule.
+- **Budget allocations**: for every consumable the team draws from — tokens, real-money spend, paid API quotas, third-party rate limits, compute — set a cap, a tracker, and a throttle. Don't reduce this to just tokens; long-running teams usually have several bounded resources.
+- **Time-based access**: for resources that can't be accessed concurrently (shared file system regions, exclusive external state, infra in transitional states, prioritized budget windows), specify who grants access and how. Platform-change "stability windows" are one instance — treat the general pattern explicitly.
+- **Time and reality checks**: name the authoritative CLIs for time and state — agents cannot self-track time or external state.
 
 ### 8. Autonomy boundary
 
-Ask explicitly: **is anything human-only, or can the leader make every call within the constraints?**
+Ask explicitly: **is anything operator-only, or can the leader make every call within the constraints?**
 
-The common failure mode: an agent stops mid-stride asking "I'm not sure, what do you think?" when the user wanted full autonomy. If autonomy is the goal, the leader must be empowered to decide everything within the constraints. Carve human-only narrowly:
+The common failure mode: an agent stops mid-stride asking "I'm not sure, what do you think?" when the operator wanted full autonomy. If autonomy is the goal, the leader must be empowered to decide everything within the constraints. Carve operator-only narrowly:
 
 - Budget escalations above the cap.
 - Strategic pivots that change the team's purpose.
@@ -141,15 +158,18 @@ The common failure mode: an agent stops mid-stride asking "I'm not sure, what do
 
 Everything else: the leader decides. Encode this both in the leader's principles ("when in doubt, decide and document") and in the constraints table.
 
+Also ask: **what does done look like?** Stop conditions go in the leader's critical behaviors so the team proposes shutdown when they're met, instead of running indefinitely.
+
 ### 9. Failure mode handling
 
 Walk through with the user, but encode only **principles** in the generated skill, not specific thresholds or recipes:
 
-- Silent teammate — leader detects, retries, then resets.
+- Silent teammate — leader detects, retries, then resets. Distinguish silent-because-busy from silent-because-crashed via a process-level liveness check, not just message-responsiveness.
 - Output drift from philosophy — auditor catches, leader corrects.
 - Stuck loop — detection and break-out responsibility.
+- Context exhaustion — long-running teammates accumulate context until they degrade. Leader watches for symptoms (lost recent state, repeated questions) and force-rotates: teammate writes a handoff to its memory file, leader respawns from that file.
 - Unclaimable task — reassignment path.
-- Budget cap hit mid-week — what stops, what continues.
+- Budget cap hit — what throttles, what continues.
 
 Concrete thresholds belong to the user; the skill records the principle.
 
@@ -157,7 +177,9 @@ Concrete thresholds belong to the user; the skill records the principle.
 
 If the repo has a memory pattern, extend it. If not, suggest `memory/<ROLE>.md` (uppercase) at repo root, one file per role, accumulating durable lessons that change future decisions — not transcripts, not status snapshots.
 
-Every role's init protocol must include reading its memory file.
+Every role re-reads its memory file at the start of each loop iteration, not just on startup. Write-only memory is useless. Audit findings, operator overrides, and observed failures must produce memory or prompt updates — not just one-off fixes.
+
+Also settle the **team-status artifact** — a single file the leader updates on each leadership-loop iteration so the operator (and any new or respawned teammate) can catch up at a glance. Extend the repo's existing dashboard pattern if one exists; otherwise suggest a top-level `team-status.md`.
 
 ### 11. Save location
 
@@ -174,7 +196,7 @@ Required sections, in order:
 3. **Init protocol** — what every teammate reads on startup (this skill, CLAUDE.md, latest artifact, their memory file).
 4. **Roles** — for each: loop, 3 decision principles, critical behaviors, key skills used.
 5. **Communication protocol** — hardcoded "#1 failure mode is insufficient communication" line, message-trigger table, how-to-message principles.
-6. **Constraints** — table of hard guardrails (git, budget, state, autonomy, stability windows, time-source).
+6. **Constraints** — table of hard guardrails (resource ownership, budget allocations, time-based access, autonomy, time-source).
 7. **Failure mode handling** — high-level principles for silent / drifting / stuck teammates.
 8. **Memory** — pointer to the repo's memory pattern; per-role file paths.
 
@@ -187,7 +209,7 @@ The skill, when invoked, should:
 
 ## Subagent review passes
 
-After drafting, run review passes. For each reference file, spawn a subagent with the prompt:
+After drafting, run review passes. **Spawn one subagent per reference file in parallel** (single message, multiple `Agent` tool calls) — the reviews are independent and there's no reason to serialize them. Each subagent gets the prompt:
 
 > Read `<reference path>` and the draft skill at `<draft path>`. Apply the review criteria from the reference. Return only **critical issues** — gaps, contradictions, places where the team would fail under the failure modes named in the reference. Be specific and quote sections you're flagging. If the draft is clean, return "no critical issues".
 
@@ -197,16 +219,16 @@ Use `general-purpose` subagents with Opus.
 |---|---|
 | `references/philosophy_review.md` | Reward-hacking hardening: are gaming patterns named, are non-negotiables hard? |
 | `references/roles_review.md` | Roles, loops, auditor presence, team size, anthropomorphic traps, autonomy clarity |
-| `references/communication_review.md` | Clarity, edge cases, cadence vs operation, silent-teammate handling, "ask the human" anti-pattern |
-| `references/constraints_review.md` | Coverage of git, budget, state, human-only, stability, time source |
+| `references/communication_review.md` | Clarity, edge cases, cadence vs operation, silent-teammate handling, "ask the operator" anti-pattern |
+| `references/constraints_review.md` | Coverage of resource ownership, budget allocations, time-based access, operator-only, time source |
 
-**Run each review until clean.** Multiple rounds are expected. Apply fixes, re-spawn, repeat. Don't move on while critical issues remain.
+**Run each review until clean.** Multiple rounds are expected. Apply fixes, then re-spawn the failing reviews in parallel again. Don't move on while critical issues remain.
 
 ## Saving and invoking
 
 When all reviews are clean:
 
-1. Show the final skill to the user for human review (this is non-optional — it's their team).
+1. Show the final skill to the operator for review (this is non-optional — it's their team).
 2. Save to the chosen location.
 3. Offer to invoke `/start-<team>-team` immediately.
 
@@ -219,3 +241,5 @@ After save, the user owns it — they'll iterate as the team runs.
 - **Treat the philosophy section as load-bearing.** It's the only thing the team has to fall back on when situations diverge from what the skill anticipated. A vague philosophy produces a team that stalls or drifts.
 - **The auditor is not optional.** If the user resists, ask what catches reward-hacking. The honest answer is usually nothing, which is the whole point.
 - **Crons are cheap.** Default to more frequent. An agent that gets pinged unnecessarily ignores the ping; an agent that doesn't get pinged forgets the world.
+- **Cron lifecycle is the leader's job.** On role spec changes, `CronDelete` the old cron and `CronCreate` the new — stale crons fire stale prompts.
+- **Sub-agents inside teammates: only leader and platform roles.** Executors work in-session — `Task` calls inside an executor loop double-bill and blur ownership.

@@ -41,19 +41,20 @@ For each metric the team optimizes:
 | <Auditor> | opus | red | max | — | Reviews work for reward-hacking and constraint drift | Audit loop | weekly + on-demand | — |
 | <...> | | | | | | | | |
 
-## Init protocol
+## Orientation protocol
 
-Every teammate, on startup, before any other work:
+Re-run on initial spawn, respawn after rotation, or detected state divergence — not once. Every teammate, before any other work:
 
-1. Read `<this skill path>` (you are reading it now — re-read on each spawn).
+1. Read `<this skill path>` (re-read on each orientation).
 2. Read `CLAUDE.md` for project conventions.
-3. Read `<latest artifact path>` for current state (e.g., latest report, current portfolio, open incidents).
+3. Read `<team-status path>` for current team state.
 4. Read your role's memory file at `<memory/ROLE.md>`.
-5. Set up your self-heartbeat cron via `CronCreate` with `durable: true` and the cadence in the team table above. The prompt should re-trigger your role's loop check.
+5. Set up your self-heartbeat cron via `CronCreate` with `durable: true` and the cadence in the team table. The prompt should re-trigger your role's loop check.
 
 The leader, additionally:
-- Run `<orient command>` to gather current state (e.g., `git status`, `alpaca account`, latest artifacts).
+- Run `<orient command>` to gather current state.
 - Send the team an initial state snapshot via `SendMessage`.
+- On any role spec change, `CronDelete` the role's old cron and `CronCreate` the new one — stale crons fire stale prompts.
 
 ## Roles
 
@@ -67,13 +68,19 @@ The leader, additionally:
 - <Opinionated trade-off 3>
 
 **Critical behaviors**
+- Re-read your memory file at the start of each loop iteration (not just on spawn).
+- Between units of work, re-check the time CLI against your cadence target — `CronCreate` only fires on idle.
 - <Mandatory operational rule, with the failure mode it prevents implicit or stated>
 - <...>
 
 **Key skills**
 - `<skill-name>` — <how this role uses it>
 
-**Autonomy**: The leader decides everything within the constraints. Escalate to human only for: <narrow list>. Default to deciding and documenting, not asking.
+**Autonomy**: The leader decides everything within the constraints. Escalate to the operator only for: <narrow list>. Default to deciding and documenting, not asking.
+
+**Stop conditions**: Propose shutdown to the operator when any of `<stop conditions>` are met (goal achieved, budget exhausted, audit finding invalidates the strategy, regime change). Evaluate on each leadership-loop iteration.
+
+**Status artifact**: Update `<team-status path>` on each leadership-loop iteration with current focus, decisions since last update, open `[DECISION NEEDED]` queue, anomalies, budget burn, last audit finding. The operator reads this first on return; new or respawned teammates read it for catch-up.
 
 ### <Executor 1>
 
@@ -112,13 +119,13 @@ The leader, additionally:
 | Any | Whoever can help | Blocked > <window> | What you're blocked on, what you've tried |
 | Leader | Auditor | On audit cadence | Artifacts to review, what to look for |
 | Auditor | Leader | Audit complete | Findings, severity, recommended action |
-| Leader | Human | Decision exceeds autonomy boundary | Decision, options, recommendation, why human-needed |
+| Leader | Operator | Decision exceeds autonomy boundary | Decision, options, recommendation, why operator-needed |
+| Any | Leader | Disagreement with a directive | The disagreement, reasoning, what would change your mind. (This is the team's primary drift signal — do not skip.) |
 
 ### When to message (encouraged)
 
 - When you discover something surprising — propagate immediately.
 - When you finish a task and are about to go idle — say what's next.
-- When you disagree with a directive — push back with reasoning. The leader decides; informed disagreement improves it.
 
 ### How to message
 
@@ -127,31 +134,41 @@ The leader, additionally:
 - Reference artifacts by full path, not "the latest report".
 - Be concise but complete — the recipient should be able to act without follow-up clarification.
 
+### Operator-facing comms
+
+The "operator" is the human admin running and supervising this team. Distinct from any other humans the team interacts with during normal operations.
+
+- **Who**: only the leader contacts the operator. Non-leader roles route through the leader.
+- **When**: decisions outside the autonomy boundary, scheduled digests at `<cadence>`, critical incidents requiring awareness.
+- **Channel**: `<terminal chat | named CLI/API e.g. "Slack via curl POST to $SLACK_WEBHOOK_URL" | etc.>`. If no out-of-terminal channel is wired up, the team waits for the operator's next session for non-urgent items.
+- **Format**: self-contained (the operator lacks team context), severity-tagged (`[DECISION NEEDED]`, `[FYI]`, `[INCIDENT]`), linking to artifacts by full path rather than embedding content.
+
 ## Constraints
 
 | Constraint | Rule | Enforcement |
 |------------|------|-------------|
-| Git | No agent commits, pushes, branches, or modifies history. Working-tree changes only. | Every role; escalate to human if git work needed. |
-| Budget | Weekly cap: <cap>. | Leader aggregates per-role spend estimates; throttles models/iterations approaching cap. |
-| State mutations | <Class>: <permitted / human-approval / forbidden> | Roles check before acting; leader enforces. |
-| Stability windows | Platform changes only with leader's go/no-go. | Infra/platform roles request; leader grants. |
+| Resource ownership | <Resource>: agent-managed / operator-managed. For agent-managed: <permitted operations>, <approval-required operations>, <forbidden operations>. | Every role checks before acting; leader enforces. |
+| Budget allocations | <Consumable>: cap <X> per <window>. Tracker: <who/how>. Throttle: <what stops or slows>. | Leader aggregates per-role consumption estimates; throttles approaching cap. |
+| Time-based access | <Resource>: concurrent / exclusive / prioritized. Grant authority: leader. | Roles request; leader grants and records. |
 | Time / reality | Use `<CLI>` for time and `<CLI>` for state. Never trust agent's sense of time. | Every role on every time- or state-dependent action. |
-| Human-only | <narrow enumerated list> | Only the leader escalates; non-leaders message the leader. |
+| Operator-only | <narrow enumerated list> | Only the leader escalates; non-leaders message the leader. |
 
 ## Failure mode handling
 
 These are principles, not recipes. The leader applies judgment within them.
 
-- **Silent teammate**: if a teammate doesn't respond within a reasonable window for that role's cadence, the leader pings. After a few attempts over a window the leader judges sufficient, the leader shuts down that teammate and respawns it pointed at its memory file.
+- **Silent teammate**: if a teammate doesn't respond within a reasonable window, the leader pings. Distinguish silent-because-busy from silent-because-crashed via a process-level liveness check, not just message-responsiveness. After a few attempts, the leader shuts down and respawns the teammate from its memory file.
 - **Drifting teammate**: if a teammate's output drifts from the philosophy (caught by the auditor or noticed by the leader), the leader sends concrete corrective feedback referencing the philosophy section. If drift continues across rounds, the leader resets the teammate.
 - **Stuck teammate**: if a teammate is spinning, the leader breaks the loop with a directive — what to try next, what to abandon, what to escalate.
+- **Context exhaustion**: long-running teammates accumulate context until they degrade. Leader watches for symptoms (lost recent state, repeated questions) and force-rotates: teammate writes a handoff to its memory file, leader respawns from that file.
 - **Unclaimable task**: if a task can't be completed by its claimer, it goes back to the task list with a note; leader reassigns.
-- **Budget at cap**: throttle expensive roles first; preserve audit cadence; pause non-critical loops; escalate to human for cap increase only if explicitly listed in human-only.
+- **Budget at cap**: throttle the most expensive consumers of the resource hitting cap first; preserve audit cadence; pause non-critical loops; escalate to the operator for cap increase only if explicitly listed in operator-only. Each budget (tokens, $$, API quotas, etc.) has its own throttle policy — don't generalize across consumables.
 
 ## Memory
 
 Each role has a memory file at `<memory/ROLE.md>` (or the existing repo pattern). Memory accumulates durable lessons that change future decisions — not transcripts, not status snapshots.
 
+- Every role re-reads its memory file at the start of each loop iteration, not just on spawn.
 - The leader may read all memory files.
 - Each role updates its own memory file when learning something that would change a future decision in this loop.
 - Memory entries are short, principled, and standalone — readable months later without conversation context.
