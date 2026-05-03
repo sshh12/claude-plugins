@@ -51,7 +51,7 @@ Claude Code can't reach external systems without an MCP server or a CLI it can s
 
 **Validate access before building.** Don't just check tool lists — run a real query against each data source the skill depends on. Permission filtering, rate limits, and stale credentials are gotchas that only surface at runtime. Discover them before the skill is built, not after.
 
-**Never hardcode sensitive or volatile data in the skill.** Targets, metrics, person names, channel IDs, and role-specific contacts should be pulled from a tool at runtime or stored in a config file the skill reads — not baked into instructions. This keeps data fresh and prevents silent breakage when people change roles.
+**Externalize data that goes stale silently.** Current targets, headcount, contacts in roles that turn over, dashboards that get renamed — pull from a tool at runtime or store in a config the skill reads. Stable identity (the user's own name, their personal links, domains they own) and durable lessons from past experience are not volatile data; hardcoding is fine, and for personal context skills it's often the whole point. Test: if this fact silently went stale tomorrow, would the skill produce subtly wrong output? If yes, externalize. If no, hardcode.
 
 **Name exact tools, not vague references.** Write "use `Read` to load the file" or "run `gh pr list --state open` via `Bash`", not "search for X" or "use the search tool". Ambiguous references push the model to pick the wrong tool or invent one.
 
@@ -212,7 +212,7 @@ Cross-cutting principles that apply across stages.
 
 - **Build in self-review checkpoints.** For multi-step pipelines where output could drift, have the skill save its draft to a file and spawn an `Agent` subagent (consider Opus for quality reviews) to read the SKILL.md plus the draft and flag where output drifts from the principles. The skill revises before continuing. Catches errors at the stage where they're cheapest to fix.
 
-- **Pull data, don't embed it.** Never hardcode targets, metrics, performance data, person names, or contact lists in skill instructions. Query a tool at runtime or ask the user. This keeps data fresh and prevents silent breakage when people change roles or numbers shift.
+- **Externalize data that goes stale silently.** Current targets, headcount, contacts in roles that turn over — pull at runtime or read from a config. The user's own name, personal links, and durable past lessons are stable identity, not volatile data; hardcoding is fine, and for personal context skills it's often the whole point. Test: if this fact silently went stale tomorrow, would the skill produce wrong output? If yes, externalize.
 
 - **Don't hardcode workspace paths.** Resolve the working directory at runtime. Hardcoding a specific folder name (`/Users/me/projects/foo`) breaks the skill the moment someone else uses it or the user reorganizes.
 

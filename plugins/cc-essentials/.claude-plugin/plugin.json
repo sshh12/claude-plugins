@@ -1,6 +1,6 @@
 {
   "name": "cc-essentials",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Essential meta-skills for working effectively with Claude Code, starting with a guided skill-builder",
   "author": {
     "name": "shrivu"
