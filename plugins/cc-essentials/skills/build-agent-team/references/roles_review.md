@@ -76,6 +76,7 @@ Flag if:
 - A critical behavior has no clear failure mode it prevents.
 - Critical behaviors duplicate the message-trigger table without adding constraint.
 - Critical behaviors are aspirational rather than mandatory.
+- A role that touches sensitive data, performs sensitive operations (reads, executions, external accesses), writes code, or interacts with external systems has behaviors covering only operational correctness — not the privacy/security rules from constraints.
 
 ### 8. Cron cadence matches operation
 

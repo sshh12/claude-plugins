@@ -43,6 +43,8 @@ If borderline, suggest starting with a skill or subagent and graduating to a tea
 
 Free-form and conversational. Do not use `AskUserQuestion` — the goal is to draw out judgment, not collect form fields. Gather all of the following before drafting.
 
+**Ask progressively.** Don't dump every question at once. Ask 1–3 of the most load-bearing questions per round, listen to the answers, then follow up grounded in what you heard. One big batch yields shallower answers than three rounds of two or three — and the operator's first answers usually reframe the questions you'd ask next anyway. Lead with the questions whose answers most constrain the rest.
+
 ### 0. Init — read what's already here
 
 Before asking anything:
@@ -145,6 +147,7 @@ Hard guardrails that override role judgment:
 - **Budget allocations**: for every consumable the team draws from — tokens, real-money spend, paid API quotas, third-party rate limits, compute — set a cap, a tracker, and a throttle. Don't reduce this to just tokens; long-running teams usually have several bounded resources.
 - **Time-based access**: for resources that can't be accessed concurrently (shared file system regions, exclusive external state, infra in transitional states, prioritized budget windows), specify who grants access and how. Platform-change "stability windows" are one instance — treat the general pattern explicitly.
 - **Time and reality checks**: name the authoritative CLIs for time and state — agents cannot self-track time or external state.
+- **Privacy and security**: two axes. Classify sensitive **data** (secrets, PII, customer data, proprietary code, regulated content) and the handling rules — disk vs. memory, what may appear in messages/logs/artifacts. Classify sensitive **operations** the agent shouldn't necessarily perform — some files shouldn't be read at all, some commands shouldn't run, some external accesses shouldn't happen. For code-writing teams, name the security review bar.
 
 ### 8. Autonomy boundary
 
@@ -196,7 +199,7 @@ Required sections, in order:
 3. **Init protocol** — what every teammate reads on startup (this skill, CLAUDE.md, latest artifact, their memory file).
 4. **Roles** — for each: loop, 3 decision principles, critical behaviors, key skills used.
 5. **Communication protocol** — hardcoded "#1 failure mode is insufficient communication" line, message-trigger table, how-to-message principles.
-6. **Constraints** — table of hard guardrails (resource ownership, budget allocations, time-based access, autonomy, time-source).
+6. **Constraints** — table of hard guardrails (resource ownership, budget allocations, time-based access, autonomy, time-source, privacy/security).
 7. **Failure mode handling** — high-level principles for silent / drifting / stuck teammates.
 8. **Memory** — pointer to the repo's memory pattern; per-role file paths.
 
@@ -220,7 +223,7 @@ Use `general-purpose` subagents with Opus.
 | `references/philosophy_review.md` | Reward-hacking hardening: are gaming patterns named, are non-negotiables hard? |
 | `references/roles_review.md` | Roles, loops, auditor presence, team size, anthropomorphic traps, autonomy clarity |
 | `references/communication_review.md` | Clarity, edge cases, cadence vs operation, silent-teammate handling, "ask the operator" anti-pattern |
-| `references/constraints_review.md` | Coverage of resource ownership, budget allocations, time-based access, operator-only, time source |
+| `references/constraints_review.md` | Coverage of resource ownership, budget allocations, time-based access, operator-only, time source, privacy/security |
 
 **Run each review until clean.** Multiple rounds are expected. Apply fixes, then re-spawn the failing reviews in parallel again. Don't move on while critical issues remain.
 

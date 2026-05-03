@@ -152,6 +152,7 @@ The "operator" is the human admin running and supervising this team. Distinct fr
 | Time-based access | <Resource>: concurrent / exclusive / prioritized. Grant authority: leader. | Roles request; leader grants and records. |
 | Time / reality | Use `<CLI>` for time and `<CLI>` for state. Never trust agent's sense of time. | Every role on every time- or state-dependent action. |
 | Operator-only | <narrow enumerated list> | Only the leader escalates; non-leaders message the leader. |
+| Privacy and security | Data: <classes> with handling rules for disk/memory/messages/logs. Operations: <forbidden reads/commands/accesses>. Code review bar: <bar>. | Every role enforces; auditor reviews. |
 
 ## Failure mode handling
 

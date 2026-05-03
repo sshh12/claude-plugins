@@ -91,7 +91,19 @@ Flag if:
 - Two constraints could fire simultaneously with no precedence rule.
 - "Use judgment" is the resolution — constraints exist precisely because judgment isn't trusted on this axis.
 
-### 8. Constraints are visible to every role
+### 8. Privacy and security are addressed
+
+Two distinct axes. **Sensitive data** the team handles needs handling rules — what can land on disk, what stays in memory, what may appear in messages/logs/artifacts. **Sensitive operations** the team could perform need permission rules — some files shouldn't be read at all, some commands shouldn't be run, some external accesses shouldn't happen. Without explicit rules, sensitive data leaks and risky operations execute by default.
+
+Flag if:
+- Sensitive data classes the team handles aren't named.
+- Sensitive operations aren't classified — read access on certain files, destructive commands, external accesses with broad scope.
+- No rule for what can be written to disk vs. kept in memory only.
+- No rule for what may appear in messages, status artifacts, or memory files.
+- Code-writing teams don't name a security review bar before code lands.
+- External system access lacks credential-handling and scope rules.
+
+### 9. Constraints are visible to every role
 
 Every role should reference the constraints in their init protocol or critical behaviors, not just the leader.
 
