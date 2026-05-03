@@ -120,7 +120,7 @@ The "operator" is the human admin running and supervising this team. Distinct fr
 - **Who**: only the leader contacts the operator. Non-leader roles route through the leader.
 - **When**: decisions outside the autonomy boundary, scheduled digests at `<cadence>`, critical incidents requiring awareness.
 - **Channel**: `<terminal chat | named CLI/API e.g. "Slack via curl POST to $SLACK_WEBHOOK_URL" | etc.>`. If no out-of-terminal channel is wired up, the team waits for the operator's next session for non-urgent items.
-- **Format**: self-contained (the operator lacks team context), severity-tagged (`[DECISION NEEDED]`, `[FYI]`, `[INCIDENT]`), linking to artifacts by full path rather than embedding content.
+- **Format**: self-contained on the channel's actual surface. Use a scheme the operator and channel can both act on quickly (urgency tagging, threading, naming convention — pick what fits). Decisions must include enough context for the operator to act without leaving the channel; text-only channels can't render linked files, so paste relevant excerpts inline. Use the channel's affordances where they help.
 
 ## Constraints
 

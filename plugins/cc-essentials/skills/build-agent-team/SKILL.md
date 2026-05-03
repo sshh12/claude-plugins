@@ -56,7 +56,9 @@ Before asking anything:
 - Look for existing memory and team-status patterns. Extend if found; otherwise plan to suggest `memory-<team>/<ROLE>.md` (uppercase) for per-role durable lessons, and a single team-status artifact the leader maintains for operator catch-up. Namespace the folder by team name so multiple teams in the same repo don't collide.
 - Note the tool surface — CLIs, scripts, `Makefile` targets, MCP servers, browser/computer-use.
 
-Tell the user what you found before interviewing further. Don't make them describe their own repo.
+For large codebases, run these scans as parallel `Explore` subagents — one per surface — instead of reading serially. Faster and keeps the main context clean.
+
+Tell the operator what you found before interviewing further. Don't make them describe their own repo.
 
 ### 1. Purpose and loops
 
@@ -137,7 +139,7 @@ Then nail down **operator-facing comms**, which is its own protocol distinct fro
 - **Who talks to the operator?** Default: only the leader. Non-leader roles route everything operator-facing through the leader. Multiple roles pinging the operator directly creates noise and contradictory asks.
 - **When?** Tie to the autonomy boundary in step 8: decisions outside the boundary, periodic status digests, critical incidents that need awareness even without a decision.
 - **What channel?** Terminal chat is the default. If the team needs to reach the operator out-of-band, the skill must name a specific channel and the exact CLI/API call. Agents can't invent a channel that isn't already wired up.
-- **What format?** Operator messages must be self-contained (the operator lacks team context), severity-tagged, and link to artifacts rather than embed them.
+- **What format?** Operator messages must be self-contained **on the channel's actual surface**. Text-only channels (WhatsApp, SMS) can't render linked files — the operator only sees the message body, so paste excerpts inline rather than referencing paths they can't open. For decisions, the message must include enough context for the operator to decide without leaving the channel. Use the channel's affordances (images, reactions, read receipts, voice) where they help; don't assume affordances the channel doesn't have.
 
 If no out-of-terminal channel is set up, say so explicitly in the skill: "Operator comms are terminal-only; the team waits for the operator's next session for non-urgent items."
 

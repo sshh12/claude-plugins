@@ -99,9 +99,12 @@ Flag if:
 - The skill is silent on **when** the leader contacts the operator. The triggers should map to the autonomy boundary (decisions outside the line) plus any cadence-based digests or incident notifications.
 - The skill is silent on **what channel** is used. Terminal chat is the default; if the team needs to reach the operator out-of-band, the skill must name the channel **and** the exact CLI/API call. Agents can't invent the integration.
 - A non-terminal channel is named but not wired up (no CLI, no env var, no test). The skill should require validation that the channel works before relying on it, or fall back to terminal-only with that stated explicitly.
-- Operator-facing message format isn't specified. These messages need to be self-contained (the operator lacks the team's context), include severity (decision needed vs FYI), and link to artifacts rather than embed full content.
+- Operator-facing message format isn't specified. The format choices (urgency scheme, threading, what gets inlined vs. linked) depend on the team and the channel — but they have to be settled, not improvised per message.
 - Non-leader roles can escalate directly to the operator without going through the leader. The leader is the single point of operator contact even when the trigger originates elsewhere.
 - Operator-facing comms are conflated with comms the team has with other humans during its operations. Each external-comms channel (customer support, user notifications) is its own protocol with its own who/when/channel/format — don't merge them with operator comms.
+- Operator messages reference artifacts the operator can't actually open from the channel they're on (e.g., linking to a local markdown file when the operator is on WhatsApp). Messages must be self-sufficient on the channel's surface — paste excerpts, don't link to files the operator can't reach.
+- A message asking the operator for a decision lacks enough context for them to actually decide on the channel's surface alone. Decisions punted to "see file X" when the operator can't open file X are not decisions the operator can make.
+- The channel's actual affordances aren't reflected in how messages are sent — text-only channels treated as if they render rich content, or rich channels (image, voice, reactions) used as plain text when their affordances would help.
 
 ### 10. Coordination via shared artifacts, not heavy messages
 
