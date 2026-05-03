@@ -149,7 +149,7 @@ These are principles, not recipes. The leader applies judgment within them.
 Durable team learning lives in several places:
 
 - **Per-role memory files** at `<memory/ROLE.md>` — role-specific lessons. Templates live at `references/memory_<role>.md` in this skill's folder; each role seeds its memory file from the template on first boot.
-- **Skills the role runs** — for roles whose primary work is running a specific skill, lessons accumulate as direct edits to the skill, not a separate file. Platform/derivative roles work this way by default.
+- **Skills the role runs** — for roles whose primary work is running a specific skill, lessons accumulate as direct edits to the skill, not a separate file. Platform/derivative roles work this way by default. Same status/calibration/promotion logic applies: one-off lessons sit in calibration, recurring patterns become structural skill edits.
 - **The team skill (this file)** — `/start-<team>-team` is the team's constitution. Only the leader applies edits; the auditor and other roles propose changes by messaging the leader.
 
 Common rules:
@@ -158,6 +158,7 @@ Common rules:
 - The leader may read all memory files.
 - Each role updates its own memory when learning something that would change a future decision.
 - Memory entries are short, principled, and standalone — readable months later without conversation context.
+- **Where updates go**: current state → status (overwritten each iteration); durable lessons → memory (accumulates); rule changes → constitution (replaces). Memory patterns that recur and aren't captured by current rules get promoted to constitution edits.
 
 ## Spawning
 

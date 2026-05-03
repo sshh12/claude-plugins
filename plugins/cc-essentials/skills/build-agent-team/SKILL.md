@@ -53,8 +53,8 @@ Before asking anything:
 
 - Read `CLAUDE.md` for project conventions.
 - List skills in `.claude/skills/` and installed plugins — these become "key skills" for relevant roles.
-- Look for existing memory and team-status patterns. Extend if found; otherwise plan to suggest `memory/<ROLE>.md` (uppercase) for per-role durable lessons, and a single team-status artifact the leader maintains for operator catch-up.
-- Note CLIs, scripts, and `Makefile` targets the team will lean on.
+- Look for existing memory and team-status patterns. Extend if found; otherwise plan to suggest `memory-<team>/<ROLE>.md` (uppercase) for per-role durable lessons, and a single team-status artifact the leader maintains for operator catch-up. Namespace the folder by team name so multiple teams in the same repo don't collide.
+- Note the tool surface — CLIs, scripts, `Makefile` targets, MCP servers, browser/computer-use.
 
 Tell the user what you found before interviewing further. Don't make them describe their own repo.
 
@@ -183,14 +183,14 @@ Concrete thresholds belong to the user; the skill records the principle.
 
 Durable team learning takes several forms — settle which fit this team:
 
-- **Per-role memory files** (default). `memory/<ROLE>.md` (uppercase), one per role. Best when lessons are role-specific.
+- **Per-role memory files** (default). `memory-<team>/<ROLE>.md` (uppercase), one per role, in a team-namespaced folder so multiple teams in the same repo don't collide. Best when lessons are role-specific.
 - **Cross-cutting memory** — organized by platform, domain, task type, or repo when lessons fall along those lines better than by role. Use the existing repo pattern if one exists.
 - **Skills as memory** — when a role's primary work is running a specific skill, lessons accumulate via edits to that skill rather than a separate file. Platform/derivative loops typically work this way: their closing loop *is* improving the skills other roles use.
 - **The team skill itself (the constitution)** — `/start-<team>-team` is the team's operating constitution. The leader owns mutations to it. The auditor and other roles can propose edits, but only the leader applies them. This is how the team evolves its own philosophy, roles, comms, or constraints when situations require it.
 
-Every role re-reads its memory at the start of each loop iteration, not just on startup. Audit findings, operator overrides, and observed failures must produce memory or prompt updates — not just one-off fixes.
+Every role re-reads its memory at the start of each loop iteration, not just on startup. **Where each update goes**: current state → status (overwritten each iteration); durable lessons → memory (accumulates); rule changes → constitution (replaces). Audit findings, operator overrides, and observed failures must produce memory or prompt updates — not one-off fixes. Memory patterns that recur and aren't captured by current rules get promoted to constitution edits — that's how the team's rules evolve from observed reality, not speculation. Same logic for skill-backed roles: one-off lessons sit in a calibration section; recurring patterns get promoted to structural edits in the skill itself.
 
-Also settle the **team-status artifact** — a single file the leader updates on each leadership-loop iteration so the operator (and any new or respawned teammate) can catch up at a glance. Extend the repo's existing dashboard pattern if one exists; otherwise suggest a top-level `team-status.md`.
+Also settle the **team-status artifact** — a single file the leader updates on each leadership-loop iteration so the operator (and any new or respawned teammate) can catch up at a glance. Extend the repo's existing dashboard pattern if one exists; otherwise default to `memory-<team>/STATUS.md` alongside the per-role memory files.
 
 ### 11. Save location
 
@@ -224,7 +224,7 @@ The skill, when invoked, should:
 - Verify `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` is set.
 - Spawn each teammate with their full role brief (extracted from the skill body) **and the max-turns ceiling set as high as the harness allows**. Long-running teams hit turn limits silently otherwise — a teammate that's run for days can quietly stop accepting work because it crossed the default cap.
 - Have the leader run the init protocol and orient the team with current state.
-- Have each teammate (including the leader) call `CronCreate` to set up their self-heartbeat — `durable: true` so it survives restarts.
+- Have each teammate (including the leader) call `CronCreate` for their self-heartbeat. Prefer `durable: true` so crons survive restarts; if `durable: true` isn't supported in the harness, fall back to in-memory crons and warn the operator not to close their Claude session — the team dies with the session otherwise.
 
 ## Subagent review passes
 
