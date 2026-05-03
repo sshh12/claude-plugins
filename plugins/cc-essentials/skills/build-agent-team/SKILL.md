@@ -200,7 +200,13 @@ Default: `<repo>/.claude/skills/start-<team>-team/SKILL.md` — project-local, c
 
 After the interview, draft `/start-<team>-team`. Use `references/skill_template.md` as a section checklist. The generated skill must be self-contained — every teammate reads it as their full brief.
 
-**Push heavy content into the generated skill's `references/` folder, not the main body.** Memory file templates (one per role), status artifact templates, role-specific reference docs, and any other boilerplate go in `<generated-skill>/references/` and are pointed to from the body by absolute path. The body holds operating logic and decision rules; references hold the format scaffolding teammates only need to read on first boot. Every teammate re-reads the body on each orientation — keeping it lean is what makes long-running teams affordable.
+**Push heavy content into `<generated-skill>/references/`:**
+
+- **Per-role briefs** at `references/role_<name>.md` — decision principles, critical behaviors, autonomy carve-outs, role-specific responsibilities. The body's Roles section keeps a short summary per role (owns / loop / cadence / key skills) and points at the brief. Only the role itself re-reads its full brief on orientation; other roles only need the summary.
+- **Memory templates** at `references/memory_<role>_template.md`, seeded by the role on first boot.
+- **Status artifact template** at `references/status_template.md`.
+
+The body = team-wide operating logic (philosophy, comms, constraints, failure modes, team table). References = per-role detail and format scaffolding, progressively disclosed. Every teammate re-reads the body on each orientation — leanness is what makes long-running teams affordable.
 
 Required sections, in order:
 

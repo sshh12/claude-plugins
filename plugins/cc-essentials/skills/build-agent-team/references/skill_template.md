@@ -48,8 +48,9 @@ Re-run on initial spawn, respawn after rotation, or detected state divergence �
 1. Read `<this skill path>` (re-read on each orientation).
 2. Read `CLAUDE.md` for project conventions.
 3. Read `<team-status path>` for current team state.
-4. Read your role's memory file at `<memory/ROLE.md>`.
-5. Set up your self-heartbeat cron via `CronCreate` with `durable: true` and the cadence in the team table. The prompt should re-trigger your role's loop check.
+4. Read your role's full brief at `<this-skill-folder>/references/role_<your-role>.md`.
+5. Read your role's memory file at `<memory/ROLE.md>`.
+6. Set up your self-heartbeat cron via `CronCreate` with `durable: true` and the cadence in the team table. The prompt should re-trigger your role's loop check.
 
 The leader, additionally:
 - Run `<orient command>` to gather current state.
@@ -58,54 +59,30 @@ The leader, additionally:
 
 ## Roles
 
+This section is the team's shared understanding of who does what. Each role's full brief — decision principles, critical behaviors, autonomy carve-outs, role-specific responsibilities — lives at `references/role_<name>.md` in this skill's folder. The role itself re-reads its full brief on each orientation. Other roles only need these summaries to know who to message and what to expect.
+
 ### <Leader>
-
-**Loop**: <one sentence — what cycle this role closes>
-
-**Decision principles**
-- <Opinionated trade-off 1>
-- <Opinionated trade-off 2>
-- <Opinionated trade-off 3>
-
-**Critical behaviors**
-- Re-read your memory file at the start of each loop iteration (not just on spawn).
-- Between units of work, re-check the time CLI against your cadence target — `CronCreate` only fires on idle.
-- <Mandatory operational rule, with the failure mode it prevents implicit or stated>
-- <...>
-
-**Key skills**
-- `<skill-name>` — <how this role uses it>
-
-**Autonomy**: The leader decides everything within the constraints. Escalate to the operator only for: <narrow list>. Default to deciding and documenting, not asking.
-
-**Stop conditions**: Propose shutdown to the operator when any of `<stop conditions>` are met (goal achieved, budget exhausted, audit finding invalidates the strategy, regime change). Evaluate on each leadership-loop iteration.
-
-**Status artifact**: Update `<team-status path>` on each leadership-loop iteration. Format lives at `references/status_template.md` in this skill's folder. The operator reads this first on return; new or respawned teammates read it for catch-up.
-
-**Constitution**: this skill is the team's operating constitution. Apply edits to it when the team needs to evolve its philosophy, roles, comms, or constraints. The auditor and other roles propose changes by messaging you; only you apply.
+- **Owns**: <files/state>
+- **Loop**: <input → closed-output>
+- **Cadence**: <cron>
+- **Key skills**: <skill: how used>
+- **Full brief**: `references/role_leader.md`
 
 ### <Executor 1>
-
-<Same shape as leader.>
+- **Owns**: <files/state>
+- **Loop**: <input → closed-output>
+- **Cadence**: <cron>
+- **Key skills**: <skill: how used>
+- **Full brief**: `references/role_executor1.md`
 
 ### <Auditor>
+- **Owns**: <files/state>
+- **Loop**: <input → closed-output, review-shaped>
+- **Cadence**: <cron>
+- **Watches for**: <gaming patterns linked to the philosophy's reward-hack section>
+- **Full brief**: `references/role_auditor.md`
 
-**Loop**: Reviews other roles' output for adherence to philosophy and constraints.
-
-**What this auditor watches for**
-- <Specific reward-hacking pattern from philosophy>
-- <Specific drift pattern>
-
-**Decision principles**
-- <How the auditor calibrates a "real" issue vs. paranoia>
-- <When to flag vs. block>
-- <Bias toward false positives vs. false negatives>
-
-**Critical behaviors**
-- Reviews on the cadence in the team table — not ad-hoc.
-- Reads <artifacts> before each review.
-- Returns findings to the leader; leader is responsible for action.
-- Does not modify primary work artifacts.
+Each `references/role_<name>.md` file contains, at minimum: the loop in full, decision principles (3), critical behaviors, key skills with usage notes, and autonomy carve-outs. The leader's brief additionally contains stop conditions, status artifact responsibilities, and constitution-edit authority. The auditor's brief additionally contains the explicit watch-list tied to the philosophy's named gaming patterns.
 
 ## Communication protocol
 
@@ -188,7 +165,7 @@ When this skill is invoked:
 
 1. Verify `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` is set in the environment.
 2. The leader (this session) reads the entire skill, then runs the init protocol.
-3. The leader spawns each teammate via the agent-teams mechanism, passing the full role brief from this file as the spawn prompt. **Set max turns as high as the harness allows on every spawn** — long-running teammates will silently hit turn caps otherwise.
+3. The leader spawns each teammate via the agent-teams mechanism, passing the body section pointer plus the spawn-time instruction to read `references/role_<their-role>.md` as their full brief during orientation. **Set max turns as high as the harness allows on every spawn** — long-running teammates will silently hit turn caps otherwise.
 4. Each teammate runs its own init protocol on startup, including setting up its `CronCreate` heartbeat.
 5. The leader sends an initial state snapshot to the team.
 6. The team begins operation.
