@@ -31,7 +31,7 @@
     {
       "name": "cc-essentials",
       "source": "./plugins/cc-essentials",
-      "description": "Essential meta-skills for working with Claude Code, starting with a guided skill-builder"
+      "description": "Essential meta-skills for working with Claude Code: builders for skills and long-running agent teams"
     }
   ]
 }

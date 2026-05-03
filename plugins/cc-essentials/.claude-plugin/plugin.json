@@ -1,7 +1,7 @@
 {
   "name": "cc-essentials",
-  "version": "0.2.0",
-  "description": "Essential meta-skills for working effectively with Claude Code, starting with a guided skill-builder",
+  "version": "0.3.0",
+  "description": "Essential meta-skills for working with Claude Code: builders for skills and long-running agent teams",
   "author": {
     "name": "shrivu"
   },
