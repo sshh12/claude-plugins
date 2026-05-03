@@ -27,6 +27,11 @@
       "name": "diy-mcp-connector",
       "source": "./plugins/diy-mcp-connector",
       "description": "Guides Claude through building a dedicated MCP server for any web app"
+    },
+    {
+      "name": "cc-essentials",
+      "source": "./plugins/cc-essentials",
+      "description": "Essential meta-skills for working with Claude Code, starting with a guided skill-builder"
     }
   ]
 }

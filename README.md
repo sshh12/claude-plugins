@@ -77,3 +77,20 @@ Then tell Claude which app you want to connect — "I want to connect my recipe 
 - **API discovery** — auto-detects browser tools you have (Claude for Chrome, brw, Playwright) for live exploration, or works with manual HAR file captures
 - **Read-only by default** — Claude can look up your data but can't accidentally change anything
 - **Works everywhere** — Claude Code, Claude Desktop/Cowork, OpenClaw, or any MCP client
+
+### [cc-essentials](https://github.com/sshh12/claude-plugins/tree/main/plugins/cc-essentials)
+
+Meta-skills for working with Claude Code itself. Currently ships one skill — `build-skill` — that walks you through building your own project skill end-to-end: framing the problem, mapping data sources, writing SKILL.md, testing on real tasks, and committing it to your repo.
+
+```
+/plugin marketplace add sshh12/claude-plugins
+/plugin install cc-essentials@shrivu-plugins
+```
+
+Then just ask — "help me build a skill for weekly status reports", "I keep re-explaining how to triage these issues, can you turn it into a skill?", or "how do skills work?" The `build-skill` skill triggers automatically and walks you through it.
+
+- **Problem-first** — starts with the painful workflow you actually have, not a hypothetical
+- **Data mapping** — figures out which built-in tools, MCP servers, and CLIs the skill needs before writing a line of SKILL.md
+- **Description tuning** — tests the trigger description with near-miss prompts so the skill fires when you want and stays quiet when you don't
+- **Real-task testing** — runs the skill on 2-3 actual examples and compares against your manual baseline before declaring it done
+- **Project-scoped** — skills land in `.claude/skills/<skill-name>/` and get committed alongside the code, so the rest of your team gets them on the next pull

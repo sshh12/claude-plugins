@@ -1,0 +1,11 @@
+{
+  "name": "cc-essentials",
+  "version": "0.1.0",
+  "description": "Essential meta-skills for working effectively with Claude Code, starting with a guided skill-builder",
+  "author": {
+    "name": "shrivu"
+  },
+  "repository": "https://github.com/shrivu/claude-plugins",
+  "license": "MIT",
+  "keywords": ["skills", "meta", "authoring", "essentials"]
+}
