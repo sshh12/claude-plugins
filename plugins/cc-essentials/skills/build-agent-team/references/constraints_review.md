@@ -38,6 +38,7 @@ Flag if:
 - A cap is named but no tracking mechanism exists.
 - No throttling rule — just stops at cap, losing in-flight work.
 - Per-role messages don't include consumption estimates feeding the trackers (where applicable).
+- The token budget reasons only about output. On long-running teams, cache-write and cache-read on the team's own context (skill, role briefs, memory, status) typically dominate spend over output — every cron fire that re-loads heavy context pays cache-write again. The constraint should account for per-tick context size and a memory/status file size ceiling, not only output.
 
 ### 3. Time-based resource access is defined
 

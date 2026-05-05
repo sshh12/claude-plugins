@@ -93,11 +93,17 @@ For each loop, gather:
 - **Decision principles** (3 bullets): how this role makes calls, what trade-offs it prioritizes, what it values over what. Keep these concise — they're the role's compass when the situation is novel.
 - **Critical behaviors**: must-do operational rules — mandatory message triggers, pre-checks, artifacts to produce. Each behavior should prevent a specific failure mode. Every role must re-check the time CLI against its cadence between units of work — `CronCreate` fires only on idle, so a busy role drifts otherwise.
 - **Cron cadence**: how often this role self-pings to re-check state. Err toward more frequent — agents can't track time on their own.
-- **Effort and model**: max effort + Opus for judgment-heavy roles. Low effort + Sonnet/Haiku only when the role is provably mechanical. When uncertain, default to Opus + max — degrading is cheaper than a bad call by an underpowered role.
+- **Effort and model**: match the *per-tick action*, not the role's hardest call. Most roles have a routine steady state — checking state, processing the next item, writing a status update — and rare hard branches that need heavy reasoning. Default lighter on the steady state, escalate explicitly on hard branches. Generally default the leader to Opus + max (bad arbitration usually costs more than the wage saved), but it's a recommendation, not a hard rule. "Degrading is cheaper than a bad call" sounds prudent but turns every tick into max-effort and is a common cost trap.
 - **Key skills**: skills already in the repo or the user's setup this role uses heavily. List name + one-line on how it's used. If a needed skill doesn't exist, flag it for the user to consider building separately.
 - **Color**: visual identity for the team config (blue/green/orange/purple/cyan/red/yellow).
 
 After roles are sketched, ask explicitly: **where do these roles step on each other?** Look for shared writable state, mutually exclusive work, and racing on shared artifacts. For each overlap, decide upfront — tighter ownership, leader-granted stability windows, or a sequence lock — and bake it into the relevant roles' critical behaviors. Coordination designed upfront beats coordination invented mid-incident.
+
+Then do the **wage math**. Model × effort × cron cadence × per-tick context size = an implied hourly wage that runs continuously. On long-running teams, cost is dominated by cache-write/cache-read on the team's own context (skill, brief, memory, status), not output — every cron fire that re-loads heavy context past the 5-min cache TTL pays cache-write again.
+
+Rough anchor at current list pricing (verify against current rates — these will drift): one **Opus + max** role on hourly cron with ~50–150K tokens of per-tick context runs **~$0.50–$1.50/hr** continuous (~$15–$35/day). **Sonnet ≈ 60% of Opus; Haiku ≈ 20%.** Multiply by team size; sub-hourly cadence multiplies further. A four-role Opus team on hourly cadence: ~$60–$150/day before anything ships.
+
+Ask the operator a daily-spend target up front, sum the implied wage, check it fits, and ask whether the work shipped per day justifies it. All three levers are material — model swap, cron cadence, per-tick context size — and they compound. Tune cadence and per-tick context first when judgment quality is the bottleneck (see "Drafting the skill" for the boot-vs-heartbeat distinction); downgrade model on roles whose per-tick action is genuinely routine.
 
 ### 4. The leader (mandatory)
 
@@ -227,6 +233,7 @@ The skill, when invoked, should:
 - Spawn each teammate with their full role brief (extracted from the skill body) **and the max-turns ceiling set as high as the harness allows**. Long-running teams hit turn limits silently otherwise — a teammate that's run for days can quietly stop accepting work because it crossed the default cap.
 - Have the leader run the init protocol and orient the team with current state.
 - Have each teammate (including the leader) call `CronCreate` for their self-heartbeat. Prefer `durable: true` so crons survive restarts; if `durable: true` isn't supported in the harness, fall back to in-memory crons and warn the operator not to close their Claude session — the team dies with the session otherwise.
+- **Heartbeat ticks ≠ orientations.** Full orientation (SKILL.md, CLAUDE.md, brief, memory) runs on boot, respawn, or detected divergence — not every cron fire. The cron prompt re-triggers the *loop*, not orientation: "<role> heartbeat — run your loop". A tick reads the status delta and pending work, then exits. Re-orienting per tick is the dominant cost trap on long-running teams. Cap memory/status file size with a pruning cadence.
 
 ## Subagent review passes
 

@@ -43,14 +43,16 @@ For each metric the team optimizes:
 
 ## Orientation protocol
 
-Re-run on initial spawn, respawn after rotation, or detected state divergence — not once. Every teammate, before any other work:
+Full orientation runs on initial spawn, respawn after rotation, and detected state divergence — *not* on every cron fire. Every teammate, before any other work on those triggers:
 
 1. Read `<this skill path>` (re-read on each orientation).
 2. Read `CLAUDE.md` for project conventions.
 3. Read `<team-status path>` for current team state.
 4. Read your role's full brief at `<this-skill-folder>/references/role_<your-role>.md`.
 5. Read your role's memory file at `<memory/ROLE.md>`.
-6. Set up your self-heartbeat cron via `CronCreate` with `durable: true` and the cadence in the team table. The prompt should re-trigger your role's loop check.
+6. Set up your self-heartbeat cron via `CronCreate` with `durable: true` and the cadence in the team table. The prompt re-triggers the role's *loop*, not its orientation (see below).
+
+**Heartbeat ticks ≠ orientations.** Cron fires don't re-run this protocol. A tick reads the status delta and pending queue, works, exits. Full re-orient runs only on boot, respawn, or explicit divergence (status references unknown state, memory mtime changed externally, leader sends a re-orient after a constitution edit). Re-orienting per tick is the dominant cost trap — every fire pays cache-write on the team's own context. Cron prompt: `<role> heartbeat — run your loop`, not `re-orient and run`.
 
 The leader, additionally:
 - Run `<orient command>` to gather current state.

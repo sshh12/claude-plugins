@@ -88,15 +88,20 @@ Flag if:
 - An execution-critical role has a cron longer than a day (work piles up unobserved).
 - The auditor's cron is missing or longer than a full loop iteration.
 - Cron cadences across roles imply coordination that the message protocol doesn't support.
+- The cron heartbeat prompt instructs the role to "re-orient" or re-read SKILL.md / CLAUDE.md / role brief on every fire. Heartbeats should run the role's *loop* against the status delta; full orientation is reserved for boot, respawn, or detected divergence. Re-orienting per tick is the dominant cost driver on long-running teams.
 
-### 9. Effort and model match judgment intensity
+### 9. Effort and model match the per-tick action
 
-Max effort + Opus for judgment-heavy roles (leader, auditor, primary researcher/strategist). Low effort + Sonnet/Haiku only when the role is provably mechanical.
+The right test is the *per-tick action*, not the role's hardest call. Match model + effort to steady-state work; reserve heavier reasoning for explicit hard-branch escalation. Default the leader to Opus + max (recommendation, not hard rule).
+
+Wage frame: model × effort × cron cadence × per-tick context size = an implied hourly wage running continuously. All three levers are material — model swap (Sonnet ≈ 60% of Opus, Haiku ≈ 20%), cadence, and per-tick context size all compound. Sum across roles and check it fits the operator's daily-spend target.
 
 Flag if:
-- A judgment-heavy role is on Sonnet or Haiku (under-powered, will produce confident bad calls).
-- A purely mechanical role is on Opus + max effort (over-spend without quality benefit).
-- The leader is on anything other than Opus + max — this is almost never the right call.
+- A role's routine steady-state work is on Opus + max with no per-tick framing.
+- The skill rationalizes max-effort-everywhere with phrasing like "degrading is cheaper than a bad call" or "max effort across the board for safety" — these turn every tick into max-effort.
+- A genuinely judgment-heavy branch is on Sonnet or Haiku.
+- The leader is downgraded from Opus + max without a stated reason.
+- The implied wage exceeds the operator's stated daily budget with no plan to tune model, cadence, or per-tick context.
 
 ### 10. Key skills are real
 
