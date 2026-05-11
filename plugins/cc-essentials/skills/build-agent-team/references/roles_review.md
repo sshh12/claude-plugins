@@ -39,6 +39,7 @@ Flag if:
 - The auditor's responsibility is folded into the leader (leaders are biased against auditing themselves).
 - The auditor is summoned ad-hoc instead of on a fixed cadence.
 - The auditor's review criteria are vague — they should tie back to the gaming patterns named in the philosophy.
+- The auditor watches reward-hacking only and not **structural hygiene**. The leader is also biased against catching memory and status file bloat, stale calibration that should have been promoted or pruned, re-orientation drift, and capability assumptions that have quietly stopped holding — these present as "housekeeping" and get deferred indefinitely. The auditor should watch these at the same fixed cadence as reward-hacking.
 
 Multiple auditors are fine when distinct failure modes warrant it. One auditor with a clear remit is better than several with overlapping ones.
 
@@ -78,6 +79,7 @@ Flag if:
 - Critical behaviors duplicate the message-trigger table without adding constraint.
 - Critical behaviors are aspirational rather than mandatory.
 - A role that touches sensitive data, performs sensitive operations (reads, executions, external accesses), writes code, or interacts with external systems has behaviors covering only operational correctness — not the privacy/security rules from constraints.
+- The same critical behavior appears verbatim (or near-verbatim) in 3+ role briefs — e.g., "re-check the time CLI between sub-tasks," "CronCreate-new before CronDelete-old," "claim then release the shared resource lock." Team-wide rules belong in the body once, not copy-pasted per role. Duplicate text in role briefs bloats every brief and drifts when one copy gets updated.
 
 ### 8. Cron cadence matches operation
 
@@ -88,7 +90,7 @@ Flag if:
 - An execution-critical role has a cron longer than a day (work piles up unobserved).
 - The auditor's cron is missing or longer than a full loop iteration.
 - Cron cadences across roles imply coordination that the message protocol doesn't support.
-- The cron heartbeat prompt instructs the role to "re-orient" or re-read SKILL.md / CLAUDE.md / role brief on every fire. Heartbeats should run the role's *loop* against the status delta; full orientation is reserved for boot, respawn, or detected divergence. Re-orienting per tick is the dominant cost driver on long-running teams.
+- The cron heartbeat prompt — **the literal string passed to `CronCreate`'s prompt field, not just surrounding prose** — instructs the role to "re-orient" or re-read SKILL.md / CLAUDE.md / role brief on every fire. Read the actual cron prompt in the draft and flag it; surrounding sections frequently say "heartbeats ≠ orientations" while the prompt itself contradicts that. Heartbeats should run the role's *loop* against the status delta; full orientation is reserved for boot, respawn, or detected divergence. Re-orienting per tick is the dominant cost driver on long-running teams.
 
 ### 9. Effort and model match the per-tick action
 

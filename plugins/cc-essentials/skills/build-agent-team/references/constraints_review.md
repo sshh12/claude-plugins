@@ -53,19 +53,21 @@ The constraints should specify, per shared resource that needs exclusive or prio
 
 Flag if:
 - A resource needing exclusive or prioritized access isn't named.
-- "Be careful" or "take turns" is the protocol — that's not a protocol.
+- "Be careful" or "take turns" is the protocol — that's not a protocol. Synchronization requires a named holder, a recorded location for the lock state, and a stale-reclamation rule (how long before a stuck lock can be reclaimed, by whom). A lock without reclamation is a deadlock waiting to happen.
 - Grant authority is unclear or distributed (multiple roles can grant the same window).
 - Emergency carve-outs aren't addressed.
 - Budget allocations that are time-window'd (e.g., "trader gets priority on tokens during market hours") aren't connected to this section.
 
-### 4. Time and reality come from CLIs, not the agent
+### 4. Time, reality, and capability come from probes, not assumption
 
-Agents cannot self-track time, market hours, file state, or external system state. The constraints should name authoritative sources for facts the team relies on.
+Agents cannot self-track time, market hours, file state, or external system state. The constraints should name authoritative sources for facts the team relies on — and the team's capability stack (harness flags, daemons, APIs, auth state) is itself a fact that needs verification, not assumption.
 
 Flag if:
 - Time-critical operations don't reference an authoritative time source.
 - Roles are expected to "remember" what time it is or what state things were in.
 - External state checks aren't tied to specific commands or CLIs.
+- The constraint treats external state as instantaneous when it's actually staleness-bounded. Between cron fires, message buffers can clear, daemons can cycle, sessions can expire, file mtime can change. Long-running operations that act on a snapshot read minutes earlier need to either re-verify before acting or tag their output with the snapshot's age.
+- The team depends on a harness flag (e.g., cron durability, max-turns ceiling, persistent identifiers), CLI behavior, or external service availability without a boot-time probe that prints VERIFY or engages a documented FALLBACK. Silent capability gaps surface days later as confused failures — a flag the harness quietly ignored, a daemon that died overnight, an API that started returning a new error shape.
 
 ### 5. Operator-only is narrow and explicit
 
@@ -95,13 +97,13 @@ Flag if:
 
 ### 8. Privacy and security are addressed
 
-Two distinct axes. **Sensitive data** the team handles needs handling rules — what can land on disk, what stays in memory, what may appear in messages/logs/artifacts. **Sensitive operations** the team could perform need permission rules — some files shouldn't be read at all, some commands shouldn't be run, some external accesses shouldn't happen. Without explicit rules, sensitive data leaks and risky operations execute by default.
+Two axes plus surfaces. **Sensitive data** the team handles needs handling rules; **sensitive operations** the team could perform need permission rules; **surfaces** the data may cross need explicit per-class permission. Sensitive content quietly migrating between surfaces is the dominant leak shape — an excerpt that's fine in working context, copied into a team message or a status report, becomes a real exposure. Surfaces typically include: working context, internal team messages, scan reports, memory files, status artifacts, operator channels, logs. The form is the team's choice (paragraph, table, per-role rule) — the existence of explicit surface rules is not.
 
 Flag if:
 - Sensitive data classes the team handles aren't named.
 - Sensitive operations aren't classified — read access on certain files, destructive commands, external accesses with broad scope.
+- **The surfaces dimension is missing** — the constraints name what's sensitive but not *where each class may appear*. Default behavior in this gap is "sensitive data appears wherever the role finds it convenient."
 - No rule for what can be written to disk vs. kept in memory only.
-- No rule for what may appear in messages, status artifacts, or memory files.
 - Code-writing teams don't name a security review bar before code lands.
 - External system access lacks credential-handling and scope rules.
 
@@ -113,6 +115,26 @@ Flag if:
 - The constraints section reads as if only the leader needs to know.
 - Role text doesn't reference the constraints.
 - A constraint that affects a specific role isn't surfaced in that role's section.
+
+### 10. Memory and shared artifacts have stated lifecycles and a curation owner
+
+Long-running teams are dominated by per-tick context cost — the size of memory files, status artifacts, and role briefs that every role re-reads on every iteration. Without explicit design, these artifacts default to append-only ledgers because agents naturally write "what just happened" the way human ops logs do. A status file specced as "current state" routinely degenerates into a week-long activity log; a role memory file mixes durable rules, rolling calibration, and per-iteration scan history in one place with no signal for what to prune. Cost compounds: cache-write past the 5-min TTL × cron cadence × team size × number of readers.
+
+The skill (in constraints, memory, or wherever fits the team) should make explicit:
+
+- **Lifecycle of each section** in each persistent artifact — replaced per iteration, rolling over a window, or durable. The form is the team's choice; the existence of a stated lifecycle for each section is not.
+- **Owner of curation** per artifact — typically the leader for shared artifacts, the role itself for its own memory. Curation is part of the role's loop, not a chore to defer.
+- **Status vs log** — artifacts re-read by many roles every iteration hold state, not history. If history matters (lock or fire history for debugging), it goes in a separate role-owned log file.
+- **Calibration sunset** — calibration entries that don't promote to constitution or playbook within a stated window get archived. Without this, "decide and document" loops grow indefinitely.
+
+Flag if:
+
+- Sections within memory or status artifacts don't declare their lifecycle, or the skill ships sections without saying which content is replaced vs. accumulated vs. durable.
+- Multiple roles write to the same artifact without a single named owner. Multi-writer artifacts produce duplication and drift.
+- No role is responsible for pruning a growing artifact. The leader's role doesn't include curation, and no platform/derivative loop owns it either.
+- The status artifact mixes current state with historical logs (lock history, fire history, closed queue items kept as struck-through). Historical content drives the file size; every role pays for re-reading it every iteration.
+- The team has any "decide and document" or calibration-log loop without a stated promotion-or-archive window.
+- Templates seeded into the team don't communicate which sections are append-only vs. windowed vs. durable. Templates set the team's default behavior; ungoverned templates produce ungoverned files.
 
 ## Output
 

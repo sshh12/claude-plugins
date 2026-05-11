@@ -38,6 +38,7 @@ Flag if:
 - A metric is named without a corresponding gaming pattern.
 - The gaming pattern is described abstractly rather than as a specific anti-pattern the team would recognize at decision time.
 - There's no instruction for what to do when the team is tempted toward the gaming pattern.
+- Only over-producing is treated as gaming. Silence and inaction can game the same metric — "default: don't" can hide a broken role behind principled restraint, and zero-output can present as virtue when the right reading is "something stopped working." For every over-production gaming pattern, also ask what under-production gaming looks like, and encode the recovery signal (e.g., how the team distinguishes principled silence from a broken signal pipeline).
 
 This is the most important section. Reward-hacking that isn't named in the philosophy will eventually surface in the team's output.
 
