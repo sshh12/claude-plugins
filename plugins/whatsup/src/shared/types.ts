@@ -20,16 +20,6 @@ export enum ErrorCode {
   FILE_NOT_FOUND = "FILE_NOT_FOUND",
 }
 
-// ---- Exit Codes ----
-
-export enum ExitCode {
-  SUCCESS = 0,
-  USAGE_ERROR = 1,
-  PROXY_ERROR = 2,
-  SOCKET_ERROR = 3,
-  ALLOWLIST_BLOCKED = 4,
-}
-
 // ---- API Response ----
 
 export interface ApiResponse {
@@ -60,6 +50,9 @@ export interface WhatsUpConfig {
   rateLimitPerContact: number;   // msgs/minute
   rateLimitTotal: number;        // msgs/minute
   maxMediaSize: number;          // bytes
+  historyFile: string;           // JSONL persistent message log
+  historyRetentionDays: number;  // prune entries older than this on startup
+  historyLoadLimit: number;      // how many recent entries to load into the in-memory buffer
 }
 
 // Config entry with source tracking
@@ -122,14 +115,12 @@ export interface ConnectionStatus {
   phone?: string;
   pushName?: string;
   lastConnected?: number;
-}
-
-// ---- Poll Result ----
-
-export interface PollResult {
-  ok: boolean;
-  messages: StoredMessage[];
-  timedOut: boolean;
+  lastDisconnected?: number;
+  lastDisconnectCode?: number | string;
+  lastDisconnectReason?: string;
+  reconnectAttempts?: number;
+  reconnectScheduled?: boolean;
+  reconnectGaveUp?: boolean;
 }
 
 // ---- Security Warnings ----

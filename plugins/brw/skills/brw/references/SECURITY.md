@@ -96,7 +96,7 @@ No config needed. Default protections apply automatically.
 {
   "allowedUrls": ["https://specific-app.example.com"],
   "blockedUrls": ["*"],
-  "disabledCommands": ["js", "intercept", "cookies", "storage"],
+  "disabledCommands": ["js", "script-run", "script-gen", "auth-tokens", "intercept", "cookies", "storage"],
   "auditLog": "/var/log/brw-audit.jsonl",
   "allowedPaths": ["/tmp/brw-screenshots"]
 }
@@ -108,8 +108,12 @@ No config needed. Default protections apply automatically.
 |---------|----------------------|
 | `navigate` | Subject to protocol blocklist and URL policy. Checks both before and after navigation. |
 | `js` | Executes arbitrary JavaScript in page context. Post-execution URL check catches JS-based navigation to blocked protocols/URLs. |
+| `script run` | Same execution surface as `js` but with a longer timeout (default 60s, max 600s) and helpers for reading cookies / decoding JWT-shaped values. Use `disabledCommands: ["script-run"]` to disable. The same post-execution URL check applies. |
+| `script gen` | Read-only against the network buffer, but the **generated script file contains stripped header values verbatim** (Cookie, Authorization, csrf-tokens) as a reference block. Treat generated `.js` files as sensitive — don't paste them into shared issues / pastes. Use `disabledCommands: ["script-gen"]` to disable. |
+| `auth-tokens` | Enumerates session cookies (incl. JWT contents with claims decoded), localStorage, sessionStorage, and captured Authorization headers. Output contains live credentials. With `--probe`, fires a request from the page context. Disable with `disabledCommands: ["auth-tokens"]` in environments where surfacing credentials in tool output is unacceptable. |
 | `cookies` | Default: scoped to current tab domain. `--all-domains` reveals cross-domain cookies. |
 | `storage` | Accesses localStorage/sessionStorage for the current page origin. |
+| `network` / `network-request` / `network-body` | Read-only against the network buffer. `--full` and `network-request` surface captured request headers (incl. Cookie, Authorization). `--with-body-preview` returns response bodies (may include PII). |
 | `intercept` | Can modify network responses. Powerful for testing but can be abused. Consider disabling in production. |
 | `file-upload` | Uploads local files to the page. Subject to `allowedPaths` restriction. |
 | `read-page` | Read-only, no security risk. |

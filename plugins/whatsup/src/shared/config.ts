@@ -29,6 +29,9 @@ const DEFAULTS: WhatsUpConfig = {
   rateLimitPerContact: 30,
   rateLimitTotal: 100,
   maxMediaSize: 67108864, // 64 MB
+  historyFile: join(homedir(), ".config", "whatsup", "messages.jsonl"),
+  historyRetentionDays: 90,
+  historyLoadLimit: 5000,
 };
 
 // ---- Config File Shape ----
@@ -51,6 +54,9 @@ interface ConfigFile {
   rateLimitPerContact?: number;
   rateLimitTotal?: number;
   maxMediaSize?: number;
+  historyFile?: string;
+  historyRetentionDays?: number;
+  historyLoadLimit?: number;
 }
 
 /**
@@ -62,6 +68,7 @@ const LOCKED_FROM_REPO: ReadonlySet<keyof ConfigFile> = new Set([
   "logFile",
   "auditLog",
   "qrCodeFile",
+  "historyFile",
 ]);
 
 /** Security warnings accumulated during the last resolveConfig() call. */
@@ -480,6 +487,25 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
       repoConfig?.maxMediaSize,
       userConfig?.maxMediaSize,
       DEFAULTS.maxMediaSize
+    ),
+    historyFile: resolveLockedString(
+      "historyFile",
+      env.WHATSUP_HISTORY_FILE,
+      repoConfig?.historyFile,
+      userConfig?.historyFile,
+      DEFAULTS.historyFile
+    ),
+    historyRetentionDays: resolveNumber(
+      env.WHATSUP_HISTORY_RETENTION_DAYS,
+      repoConfig?.historyRetentionDays,
+      userConfig?.historyRetentionDays,
+      DEFAULTS.historyRetentionDays
+    ),
+    historyLoadLimit: resolveNumber(
+      env.WHATSUP_HISTORY_LOAD_LIMIT,
+      repoConfig?.historyLoadLimit,
+      userConfig?.historyLoadLimit,
+      DEFAULTS.historyLoadLimit
     ),
   };
 }

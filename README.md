@@ -26,6 +26,7 @@ Then use `/brw` to start browsing. The proxy auto-starts on first command and st
 - **Read pages**: screenshots, DOM extraction, console logs, network traffic
 - **Record**: GIF recordings of multi-step workflows
 - **Multi-tab**: open, switch, and manage browser tabs
+- **Script-driven extraction**: capture the app's own XHRs and replay them as a `.js` script that uses the user's existing session — paginate inboxes, export history, scrape behind login without clicking through the UI
 - **Security**: configurable URL blocking, protocol restrictions, cookie scoping
 
 ### [freetaxusa](https://github.com/sshh12/claude-plugins/tree/main/plugins/freetaxusa)
@@ -48,19 +49,18 @@ Then use `/freetaxusa` to start. The skill walks through 5 phases:
 
 ### [whatsup](https://github.com/sshh12/claude-plugins/tree/main/plugins/whatsup)
 
-WhatsApp messaging for Claude Code via the Baileys WebSocket client. Send and receive messages, react, share media/locations/polls, search chat history, and long-poll for incoming messages — all restricted to an allowlist of approved contacts.
+WhatsApp **MCP server** for Claude Code via the Baileys WebSocket client. Inbound WhatsApp messages get pushed to Claude as `notifications/claude/channel` events; Claude responds with the `reply` tool. Bidirectional, no polling, no CLI.
 
 ```
 /plugin marketplace add sshh12/claude-plugins
 /plugin install whatsup@shrivu-plugins
 ```
 
-Then use `/whatsup` to start. The proxy auto-starts on first command. Key capabilities:
-- **Messaging**: send text, media, locations, polls, contact cards, reactions
-- **Monitoring**: long-poll for incoming messages, read chat history, search messages
-- **Profile**: set status text, update display name and picture
-- **Security**: allowlist-only sends, rate limiting, audit logging, untrusted content tagging
-- **Architecture**: same CLI + proxy pattern as brw — stateless CLI, persistent Fastify daemon, auto-start/stop
+Restart Claude Code, then ask it to call the `status` tool — first run surfaces a QR file for **WhatsApp → Settings → Linked Devices → Link a Device**. Key capabilities:
+- **Bidirectional**: messages from allowlisted contacts arrive as channel notifications; Claude replies via the `reply` MCP tool
+- **Tool surface**: `reply`, `react`, `edit_message`, `download_attachment`, `status`, `unreplied`, `list_chats`, `read_chat`, `search`, `contacts`
+- **Security**: allowlist-only sends (empty = blocked), per-contact + global rate limits, `<untrusted_user_message>` wrapping on inbound text, audit logging
+- **Architecture**: single MCP stdio process — no daemon, no HTTP, lifetime tied to the Claude Code session
 
 ### [diy-mcp-connector](https://github.com/sshh12/claude-plugins/tree/main/plugins/diy-mcp-connector)
 

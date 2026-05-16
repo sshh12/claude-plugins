@@ -183,7 +183,14 @@ export function filterMessageForOutput(
     };
   }
 
-  // "tagged" or "full" -- wrap text content in untrusted tags
+  // Our own outbound messages are NOT untrusted — Claude (or its predecessor
+  // session) sent them. Tagging would be misleading and pollute conversational
+  // context. Only wrap inbound content.
+  if (message.isFromMe) {
+    return { ...message };
+  }
+
+  // "tagged" or "full" -- wrap inbound text content in untrusted tags
   return {
     ...message,
     text: message.text ? wrapUntrusted(message.text) : undefined,

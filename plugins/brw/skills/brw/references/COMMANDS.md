@@ -37,7 +37,7 @@ Read-only commands return command-specific fields without screenshot or page:
 {"ok": true, "tree": "...", "refCount": 42}
 ```
 
-Read-only commands: read-page, get-text, js, tabs, new-tab, close-tab, console, network, network-body, cookies, storage, perf, config.
+Read-only commands: read-page, get-text, js, tabs, new-tab, close-tab, console, network, network-request, network-body, cookies, storage, perf, config, auth-tokens, script run, script gen.
 
 ### Error
 
@@ -261,9 +261,11 @@ cat script.js | brw js [--frame INDEX|NAME] [--tab ID]
 | `--file` | Read JavaScript from a file path |
 | `--frame` | Target iframe by index, name, or URL |
 
-Evaluates JavaScript in the page context. Supports `await` for async expressions. Returns serialized result.
+Evaluates JavaScript in the page context. Returns the serialized result.
 
-Use `-` as the expression or pipe to stdin for complex/multi-line JS to avoid shell quoting issues. **Note**: multi-line heredoc/file input requires explicit `return` for the last value (single-line expressions auto-return the last expression value).
+Use `-` as the expression or pipe to stdin for complex/multi-line JS to avoid shell quoting issues. Multi-line inputs are auto-wrapped in an async IIFE — top-level `await` and top-level `return <value>` both work. Single-line expressions auto-return the expression value (no `return` needed).
+
+For larger scripts with `--param key=value` arguments, helper globals (`log`, `sleep`, `cookie`, `gjson`, `xssiUnwrap`), and a `{result, logs, durationMs}` envelope, use `brw script run` instead.
 
 ---
 
@@ -361,15 +363,25 @@ Output: `{"ok": true, "tabs": [{"id": 1, "url": "...", "title": "..."}], "active
 ### `brw new-tab`
 
 ```bash
-brw new-tab [url] [--wait dom|network|render] [--alias NAME]
+brw new-tab [url] [--wait dom|network|render] [--alias NAME] [--viewport WxH] [--window]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--wait` | Wait strategy before returning |
 | `--alias` | Atomically assign alias to the new tab (avoids race conditions in multi-agent setups) |
+| `--viewport <WxH>` | Override the tab's viewport before first paint (e.g. `1600x4000`). Useful for virtualized lists that mount only what fits on-screen. |
+| `--window` | Open in a new Chrome window rather than a tab |
 
-Output: `{"ok": true, "tabId": 2, "url": "...", "alias": "inbox"}`
+Output: `{"ok": true, "tabId": 2, "url": "...", "alias": "inbox", "viewport": {"width": 1600, "height": 4000}}`
+
+If the page redirects after load (e.g. an app silently sends you to /login when not authenticated), the response includes a `redirect` field:
+
+```json
+{"ok": true, "tabId": 2, "url": "...", "redirect": {"from": "https://app.example.com/main", "to": "https://app.example.com/login", "loginPageHeuristic": true}}
+```
+
+`loginPageHeuristic: true` is set when the final path matches `/login|/signin|/auth|/sso|/oauth`.
 
 ### `brw switch-tab`
 
@@ -435,10 +447,33 @@ Output: `{"ok": true, "messages": [{"level": "log", "text": "...", "timestamp": 
 ### `brw network`
 
 ```bash
-brw network [--url-pattern PATTERN] [--limit N] [--clear] [--tab ID]
+brw network [--url-pattern P]... [--status CODE]... [--limit N] [--clear] [--full] [--with-body-preview N] [--tab ID]
 ```
 
-Output: `{"ok": true, "requests": [{"id": "...", "method": "GET", "url": "...", "status": 200, "duration": 123, "size": 4096}]}`
+| Flag | Description |
+|------|-------------|
+| `--url-pattern` | URL substring filter. Repeatable (OR-matched) or comma-separated (`--url-pattern A --url-pattern B`, or `--url-pattern A,B`) |
+| `--status` | Status code filter. Repeatable. Accepts exact (`--status 401`) or class (`--status 4xx`, `--status 2xx`) |
+| `--limit` | Take the last N matching requests |
+| `--clear` | Clear the buffer after reading |
+| `--full` | Include `requestHeaders`, `requestBody`, and (when applicable) `requestBodyJson` / `requestBodyForm` (auto-parsed) per entry |
+| `--with-body-preview [chars]` | Fetch and inline the first N chars of each matched response body (default 300, max 2000). The XSSI prefix `)]}'` is stripped automatically. |
+
+Output: `{"ok": true, "requests": [{"id": "...", "method": "GET", "url": "...", "status": 200, "duration": 123, "size": 4096, "resourceType": "Fetch"}]}`
+
+With `--full`, each entry includes `requestHeaders`, `requestBody` (gzipped/deflate/br request bodies are transparently decoded), and either `requestBodyJson` (when the body is JSON) or `requestBodyForm` (when it's URL-encoded with JSON values, e.g. Google's `f.req=<URL-encoded JSON>`).
+
+With `--with-body-preview N`, each entry also includes `bodyPreview` (first N chars of the response body), `bodyTruncated` (boolean), and `bodyTotalSize`.
+
+### `brw network-request`
+
+```bash
+brw network-request <request_id> [--tab ID]
+```
+
+Returns the full captured request — method, URL, headers, body, response status, duration, size. Auto-parses JSON / form-encoded JSON request bodies (same `requestBodyJson` / `requestBodyForm` fields as `network --full`).
+
+Output: `{"ok": true, "request": {...same shape as network entry but always full...}}`
 
 ### `brw network-body`
 
@@ -447,6 +482,173 @@ brw network-body <request_id> [--tab ID]
 ```
 
 Output: `{"ok": true, "body": "...", "base64": false, "mimeType": "application/json"}`
+
+---
+
+## Auth Tokens
+
+### `brw auth-tokens`
+
+```bash
+brw auth-tokens [--verbose] [--probe URL] [--probe-method GET|POST|...] [--probe-body BODY] [--tab ID]
+```
+
+Enumerates session credentials present in the current tab:
+- Non-httpOnly cookies (`--verbose` includes httpOnly cookies too — they aren't readable from JS but are auto-sent with `credentials: 'include'`)
+- `localStorage` and `sessionStorage` entries
+- The most recently captured `Authorization` / `csrf-token` / `x-csrf-token` / `x-xsrf-token` / `x-framework-xsrf-token` request header values
+
+JWT-shaped values have their `payload` claims decoded inline (so `custom:user_id`, `email`, `exp` etc. appear without manual base64-decoding).
+
+With `--probe <url>`, the command additionally fires a same-origin fetch from the page context and reports the status code + body preview. Useful for confirming "am I logged in?" in one call.
+
+| Flag | Description |
+|------|-------------|
+| `--verbose` | Include httpOnly cookies in the listing |
+| `--probe` | Fire a request to this URL after listing tokens. Includes `credentials: 'include'`. |
+| `--probe-method` | HTTP method for `--probe` (default GET) |
+| `--probe-body` | Request body for `--probe` (sent as `application/json`) |
+
+Output:
+
+```json
+{
+  "ok": true,
+  "count": 12,
+  "summary": {
+    "total": 12,
+    "nonEmpty": 11,
+    "hasJwt": true,
+    "hasCapturedAuth": true,
+    "hasSessionCookie": true,
+    "likelyLoggedIn": true
+  },
+  "probe": {
+    "url": "https://app.example.com/api/me",
+    "method": "GET",
+    "status": 200,
+    "ok": true,
+    "durationMs": 88,
+    "bodyPreview": "{\"id\":42,\"email\":...}"
+  },
+  "tokens": [
+    {"source": "cookie", "key": "session", "value": "abc...", "scheme": "csrf-session-id"},
+    {"source": "localStorage", "key": "auth", "value": "eyJ...", "scheme": "jwt",
+     "jwtClaims": {"sub": "...", "exp": 1234567890, "custom:user_id": "42"}}
+  ]
+}
+```
+
+The `likelyLoggedIn` heuristic uses cookie/JWT/captured-Authorization presence by default; with `--probe` it's refined by the status code. **403 does not downgrade** `likelyLoggedIn` — 403 commonly means "you're authenticated but missing a CSRF header", not "logged out". Only 401 reliably indicates no session.
+
+---
+
+## Script Run & Generate
+
+### `brw script run`
+
+```bash
+brw script run [path.js | -] [--inline CODE] [--param key=value]... [--frame TARGET] [--timeout N] [--output PATH] [--tab ID]
+```
+
+Runs a `.js` script inside the active tab's runtime — the script has access to the page's cookies, session, CSRF tokens, etc. via `fetch(url, { credentials: 'include' })`. The script body is wrapped in an `async` IIFE, so it may use top-level `await` and `return` a value.
+
+Three input modes:
+- **File path**: `brw script run /tmp/x.js`
+- **Stdin**: `brw script run - <<'JS' ... JS`
+- **Inline**: `brw script run --inline "return document.title"`
+
+Injected globals available inside the script body:
+
+| Name | Description |
+|------|-------------|
+| `args` | Object built from `--param key=value` pairs |
+| `log(...)` | Appends a line to the returned `logs` array |
+| `sleep(ms)` | Returns a promise resolving after `ms` |
+| `cookie(name)` | Reads a non-httpOnly cookie by name (URL-decoded, quote-stripped) |
+| `xssiUnwrap(text)` | Strips the `)]}'` XSSI prefix used by some Google APIs |
+| `gjson(responseOrText)` | `xssiUnwrap` + `JSON.parse` in one call (accepts a Response or a string) |
+
+| Flag | Description |
+|------|-------------|
+| `--param key=value` | Add to `args` (repeatable) |
+| `--inline <code>` | Run the given source instead of reading a file |
+| `--frame` | Run in an iframe context (by index, name, or URL) |
+| `--timeout` | Max script duration in seconds (default 60, max 600) |
+| `--output <path>` | Write the JSON result envelope to this path. Stdout returns only a slim summary (`{ok, output, bytesWritten, durationMs, logsCount, hint}`) so large results don't flood the terminal. |
+
+Output (no `--output`):
+
+```json
+{"ok": true, "result": <whatever-the-script-returned>, "logs": ["..."], "durationMs": 1234}
+```
+
+On script throw: `{"ok": false, "code": "SCRIPT_ERROR", "error": "...", "stack": "...", "logs": [...], "durationMs": 12}`.
+
+Example:
+
+```js
+// /tmp/pull.js
+const csrf = cookie('JSESSIONID');     // helper auto-injected
+const res = await fetch('/voyager/api/feed/updates', {
+  credentials: 'include',
+  headers: { 'csrf-token': csrf },
+});
+log(`status: ${res.status}`);
+return await res.json();
+```
+
+```bash
+/tmp/brw script run /tmp/pull.js --timeout 30 --output /tmp/pull.json
+```
+
+### `brw script gen`
+
+```bash
+brw script gen [--url-pattern P]... [--method M]... [--status-min CODE] [--limit N] [--output PATH] [--tab ID]
+```
+
+Generates a runnable `.js` script from captured network requests. Each matched request becomes an `await fetch(url, {method, headers, credentials:'include', body})` block.
+
+| Flag | Description |
+|------|-------------|
+| `--url-pattern` | Substring URL filter. Repeatable (OR-matched) or comma-separated. |
+| `--method` | Filter by HTTP method, repeatable (e.g. `--method POST --method PUT`) |
+| `--status-min` | Skip responses below this status |
+| `--limit` | Take the last N matching requests |
+| `--output` | Write to file. Without it, the script source is returned in the JSON response |
+
+The generator **strips** `Cookie`, `Authorization`, `Host`, `Connection`, `Content-Length`, `sec-*` headers, and HTTP/2 pseudo-headers. Cookies are auto-attached by the browser via `credentials: 'include'`.
+
+The generated file includes:
+1. An **auth-handling banner** explaining when `credentials: 'include'` is sufficient and when you need to read tokens at runtime (SPA bearer-token apps like Whoop or X/Twitter).
+2. A `STRIPPED_HEADERS` reference comment block listing every header that was removed, per-request — so you can see what was stripped and re-add anything the server actually needs at script runtime.
+3. One `await fetch(...)` per captured request.
+
+A `HEADS-UP` block appears at the top if any captured request included an `Authorization` header (the browser will *not* auto-send `Authorization`; you have to read it from a cookie/storage and re-add it).
+
+Output: `{"ok": true, "count": 7, "source": "...", "output": "/tmp/foo.js"}`
+
+Typical workflow:
+
+```bash
+# 1. Open + survey
+/tmp/brw new-tab https://app.example.com --alias tab-x --wait dom
+/tmp/brw auth-tokens --probe https://app.example.com/api/me --tab tab-x
+
+# 2. Trigger and discover
+/tmp/brw navigate https://app.example.com/feed --tab tab-x
+/tmp/brw network --url-pattern api --with-body-preview 300 --tab tab-x
+/tmp/brw network-request <id> --tab tab-x
+
+# 3. Generate starter and edit
+/tmp/brw script gen --url-pattern api/feed --output /tmp/feed-pull.js --tab tab-x
+
+# 4. Run
+/tmp/brw script run /tmp/feed-pull.js --output /tmp/feed.json --tab tab-x
+```
+
+See `references/SCRIPT-WORKFLOW.md` for the full runbook (auth patterns, pagination types, response shapes, gotchas).
 
 ---
 

@@ -1,3 +1,4 @@
+import type { WAMessage } from 'baileys';
 import type { StoredMessage } from '../shared/types.js';
 
 type MessageFilter = {
@@ -15,13 +16,27 @@ type MessageSubscriber = {
 
 export class MessageStore {
   private buffer: StoredMessage[];
+  private rawById: Map<string, WAMessage>;
   private maxSize: number;
   private subscribers: Set<MessageSubscriber>;
 
   constructor(maxSize: number = 500) {
     this.buffer = [];
+    this.rawById = new Map();
     this.maxSize = maxSize;
     this.subscribers = new Set();
+  }
+
+  /**
+   * Store the raw Baileys WAMessage for later downloadMediaMessage calls.
+   * FIFO-evicted in lockstep with the StoredMessage buffer.
+   */
+  putRaw(id: string, raw: WAMessage): void {
+    this.rawById.set(id, raw);
+  }
+
+  getRaw(id: string): WAMessage | undefined {
+    return this.rawById.get(id);
   }
 
   /**
@@ -58,9 +73,10 @@ export class MessageStore {
 
     this.buffer.push(message);
 
-    // Ring buffer: drop oldest when full
+    // Ring buffer: drop oldest when full (also evict its raw proto if any)
     if (this.buffer.length > this.maxSize) {
-      this.buffer.shift();
+      const dropped = this.buffer.shift();
+      if (dropped?.id) this.rawById.delete(dropped.id);
     }
 
     // Check all subscribers for matches
@@ -151,6 +167,7 @@ export class MessageStore {
    */
   clear(): void {
     this.buffer = [];
+    this.rawById.clear();
 
     for (const subscriber of this.subscribers) {
       if (subscriber.timer) {

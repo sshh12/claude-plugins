@@ -14,7 +14,7 @@ export async function handleListTabs(cdp: CDPManager): Promise<ApiResponse> {
 export async function handleNewTab(
   cdp: CDPManager,
   config: BrwConfig,
-  params: { url?: string; wait?: string; alias?: string; noScreenshot?: boolean; window?: boolean }
+  params: { url?: string; wait?: string; alias?: string; noScreenshot?: boolean; window?: boolean; viewport?: string }
 ): Promise<ApiResponse> {
   const logger = getGlobalLogger();
   let url = params.url;
@@ -44,6 +44,32 @@ export async function handleNewTab(
     alias = params.alias;
   }
 
+  // Apply per-tab viewport override BEFORE any wait, so first paint uses the
+  // requested size. Useful for virtualized lists (Gmail, Slack, etc.) where
+  // a small initial viewport mounts very few rows.
+  let viewportApplied: { width: number; height: number } | undefined;
+  if (params.viewport) {
+    const m = /^(\d+)\s*[x×]\s*(\d+)$/.exec(params.viewport);
+    if (!m) {
+      return {
+        ok: false,
+        error: `Invalid --viewport: ${params.viewport}. Expected WxH (e.g. 1600x4000)`,
+        code: 'INVALID_ARGUMENT',
+      };
+    }
+    const width = parseInt(m[1], 10);
+    const height = parseInt(m[2], 10);
+    try {
+      const client = cdp.getClient(result.tabId);
+      await client.Emulation.setDeviceMetricsOverride({
+        width, height, deviceScaleFactor: 1, mobile: false,
+      });
+      viewportApplied = { width, height };
+    } catch (err: any) {
+      logger.warn(`new-tab --viewport failed: ${err?.message}`);
+    }
+  }
+
   // If --wait is specified and a URL was provided, wait for the page to load
   if (params.wait && url) {
     const client = cdp.getClient(result.tabId);
@@ -53,17 +79,37 @@ export async function handleNewTab(
       tab: result.tabId,
       noScreenshot: params.noScreenshot,
     });
+    const redirectInfo = describeRedirect(url, page.url);
     return {
       ok: true,
       tabId: result.tabId,
       url: page.url || result.url,
       alias,
+      viewport: viewportApplied,
+      ...(redirectInfo ? { redirect: redirectInfo } : {}),
       screenshot: screenshotResult.screenshot,
       page,
     };
   }
 
-  return { ok: true, tabId: result.tabId, url: url || result.url, alias };
+  return { ok: true, tabId: result.tabId, url: url || result.url, alias, viewport: viewportApplied };
+}
+
+/**
+ * Describe how the final URL differs from the requested URL. Surfaces a
+ * loginPageHeuristic when the final path looks like an auth screen — useful
+ * for early-exit when an app silently kicks you to /login.
+ */
+function describeRedirect(requestedUrl: string, finalUrl: string | undefined): { from: string; to: string; loginPageHeuristic: boolean } | null {
+  if (!finalUrl) return null;
+  if (finalUrl === requestedUrl) return null;
+  let toPath = finalUrl;
+  try { toPath = new URL(finalUrl).pathname; } catch { /* ignore */ }
+  let fromPath = requestedUrl;
+  try { fromPath = new URL(requestedUrl).pathname; } catch { /* ignore */ }
+  if (toPath === fromPath) return null;
+  const loginPageHeuristic = /\/(login|signin|sign-in|auth|sso|oauth|account\/login)\b/i.test(toPath);
+  return { from: requestedUrl, to: finalUrl, loginPageHeuristic };
 }
 
 export async function handleSwitchTab(

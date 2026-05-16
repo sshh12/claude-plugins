@@ -56,15 +56,26 @@ export async function handleJs(
   const tabId = params.tab;
   const client = cdp.getClient(tabId);
 
-  // Auto-wrap await expressions in async IIFE
+  // Auto-wrap in async IIFE when the expression is a multi-line block, contains
+  // a top-level `return`, or uses `await`. Single-line expressions are left as
+  // expressions so `brw js "document.title"` works without ceremony.
   let expression = params.expression;
-  if (/\bawait\s/.test(expression)) {
+  {
     const trimmed = expression.trim();
     const lines = trimmed.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    if (lines.length === 1 && !trimmed.endsWith(';')) {
-      expression = `(async () => { return ${expression}; })()`;
-    } else {
-      expression = `(async () => { ${expression} })()`;
+    const multiLine = lines.length > 1;
+    const hasAwait = /\bawait\s/.test(expression);
+    const hasTopLevelReturn = /^[ \t]*return\b/m.test(expression);
+    const isAlreadyWrapped = /^\(\s*(?:async\s*)?\(\s*\)\s*=>/.test(trimmed) || /^\(\s*async\s*function/.test(trimmed);
+
+    if (!isAlreadyWrapped && (multiLine || hasAwait || hasTopLevelReturn)) {
+      if (!multiLine && hasAwait && !trimmed.endsWith(';') && !hasTopLevelReturn) {
+        // single-line await expression: preserve the value
+        expression = `(async () => { return ${expression}; })()`;
+      } else {
+        // multi-line block: the user can use `return` for an explicit value
+        expression = `(async () => {\n${expression}\n})()`;
+      }
     }
   }
 

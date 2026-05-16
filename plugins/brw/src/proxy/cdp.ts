@@ -60,6 +60,7 @@ interface TabState {
 
 const MAX_BUFFER_SIZE = 1000;
 const MAX_NETWORK_BODIES = 200;
+const MAX_POST_DATA_SIZE = 16 * 1024; // 16KB cap on captured request bodies
 
 export class CDPManager {
   private tabs = new Map<string, TabState>();
@@ -294,20 +295,62 @@ export class CDPManager {
       }
     });
 
-    // Network buffer — single responseReceived handler with Map-based method lookup
-    const requestMethodMap = new Map<string, string>();
+    // Network buffer — capture request details on requestWillBeSent for later replay/inspection
+    interface PendingRequest {
+      method: string;
+      headers?: Record<string, string>;
+      body?: string;
+      resourceType?: string;
+    }
+    const pendingRequests = new Map<string, PendingRequest>();
     client.on('Network.requestWillBeSent', (params: any) => {
-      requestMethodMap.set(params.requestId, params.request?.method || 'GET');
-      if (requestMethodMap.size > MAX_BUFFER_SIZE) {
-        const first = requestMethodMap.keys().next().value;
-        if (first) requestMethodMap.delete(first);
+      const req = params.request || {};
+      const entry: PendingRequest = {
+        method: req.method || 'GET',
+        resourceType: params.type,
+      };
+      if (req.headers && typeof req.headers === 'object') {
+        entry.headers = {};
+        for (const k of Object.keys(req.headers)) {
+          const v = req.headers[k];
+          if (typeof v === 'string') entry.headers[k] = v;
+        }
+      }
+      if (typeof req.postData === 'string') {
+        // Decode gzipped/deflate/br request bodies. Some apps (YouTube's INNERTUBE,
+        // some Google Workspace endpoints) gzip the request body itself; the raw
+        // bytes are unreadable mojibake otherwise.
+        let body = req.postData;
+        const enc = (entry.headers?.['content-encoding'] || entry.headers?.['Content-Encoding'] || '').toLowerCase();
+        if (enc.includes('gzip') || enc.includes('deflate') || enc.includes('br')) {
+          try {
+            const buf = Buffer.from(body, 'binary');
+            const zlib = require('zlib') as typeof import('zlib');
+            let decoded: Buffer | null = null;
+            if (enc.includes('gzip')) decoded = zlib.gunzipSync(buf);
+            else if (enc.includes('deflate')) decoded = zlib.inflateSync(buf);
+            else if (enc.includes('br') && typeof zlib.brotliDecompressSync === 'function') decoded = zlib.brotliDecompressSync(buf);
+            if (decoded) body = decoded.toString('utf-8');
+          } catch {
+            // best-effort — leave raw if decode fails
+          }
+        }
+        entry.body = body.length > MAX_POST_DATA_SIZE
+          ? body.substring(0, MAX_POST_DATA_SIZE) + `\n... [truncated, original ${body.length} bytes]`
+          : body;
+      }
+      pendingRequests.set(params.requestId, entry);
+      if (pendingRequests.size > MAX_BUFFER_SIZE) {
+        const first = pendingRequests.keys().next().value;
+        if (first) pendingRequests.delete(first);
       }
     });
 
     client.on('Network.responseReceived', (params: any) => {
+      const pending = pendingRequests.get(params.requestId);
       const req: NetworkRequest = {
         id: params.requestId,
-        method: requestMethodMap.get(params.requestId) ||
+        method: pending?.method ||
           params.response?.requestHeaders?.[':method'] || 'GET',
         url: params.response?.url || '',
         status: params.response?.status || 0,
@@ -316,11 +359,14 @@ export class CDPManager {
           : 0,
         size: params.response?.encodedDataLength || 0,
       };
+      if (pending?.headers) req.requestHeaders = pending.headers;
+      if (pending?.body !== undefined) req.requestBody = pending.body;
+      if (pending?.resourceType) req.resourceType = pending.resourceType;
       state.networkBuffer.push(req);
       if (state.networkBuffer.length > MAX_BUFFER_SIZE) {
         state.networkBuffer.shift();
       }
-      requestMethodMap.delete(params.requestId);
+      pendingRequests.delete(params.requestId);
     });
 
     // Dialog handling

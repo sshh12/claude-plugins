@@ -1,7 +1,7 @@
 {
   "name": "whatsup",
-  "version": "0.1.0",
-  "description": "WhatsApp messaging for Claude Code via Baileys WebSocket client",
+  "version": "0.2.0",
+  "description": "WhatsApp MCP server for Claude Code via Baileys — bidirectional channel with allowlist gating, push notifications, and the reply/react/edit/download tool surface",
   "author": {
     "name": "shrivu"
   },

@@ -1,17 +1,17 @@
 {
   "name": "whatsup",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "WhatsApp messaging plugin for Claude Code via Baileys WebSocket client",
+  "description": "WhatsApp MCP server for Claude Code via Baileys WebSocket client",
   "scripts": {
     "build": "bash build.sh",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "baileys": "^6.7.21",
-    "commander": "^14.0.3",
-    "fastify": "^5.7.4",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

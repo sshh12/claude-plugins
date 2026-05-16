@@ -24,7 +24,10 @@ import { handleDrag } from './handlers/drag.js';
 import { handleWaitFor } from './handlers/wait-for.js';
 import { handleDialog } from './handlers/dialog.js';
 import { handleConsole } from './handlers/console.js';
-import { handleNetwork, handleNetworkBody } from './handlers/network.js';
+import { handleNetwork, handleNetworkBody, handleNetworkRequest } from './handlers/network.js';
+import { handleScriptRun } from './handlers/script.js';
+import { handleScriptGen } from './handlers/script-gen.js';
+import { handleAuthTokens } from './handlers/auth-tokens.js';
 import { handleResize } from './handlers/resize.js';
 import { handleFileUpload } from './handlers/file-upload.js';
 import { handleQuick } from './handlers/quick.js';
@@ -442,6 +445,8 @@ function getErrorHint(code: string): string {
       return 'The network request may have already completed. Use "brw network" to list recent requests.';
     case ErrorCode.JS_ERROR:
       return 'Check the JavaScript expression for syntax errors. Use "brw js" to run expressions.';
+    case ErrorCode.SCRIPT_ERROR:
+      return 'The script body threw. Check stack/logs in the response. Iterate with `brw script run` after editing the file.';
     case ErrorCode.INTERCEPT_ERROR:
       return 'Check intercept rule pattern and ensure Fetch domain is enabled. Use "brw intercept list" to see active rules.';
     case ErrorCode.PROFILE_NOT_FOUND:
@@ -629,6 +634,10 @@ async function main() {
   server.post('/api/console', readHandler('console', async (body) => handleConsole(cdp, body)));
   server.post('/api/network', readHandler('network', async (body) => handleNetwork(cdp, body)));
   server.post('/api/network-body', readHandler('network-body', async (body) => handleNetworkBody(cdp, body)));
+  server.post('/api/network-request', readHandler('network-request', async (body) => handleNetworkRequest(cdp, body)));
+  server.post('/api/script/run', readHandler('script-run', async (body) => handleScriptRun(cdp, body, config)));
+  server.post('/api/script/gen', readHandler('script-gen', async (body) => handleScriptGen(cdp, body)));
+  server.post('/api/auth-tokens', readHandler('auth-tokens', async (body) => handleAuthTokens(cdp, body)));
   server.post('/api/cookies', readHandler('cookies', async (body) => handleCookies(cdp, body, config)));
   server.post('/api/storage', readHandler('storage', async (body) => handleStorage(cdp, body)));
   server.post('/api/intercept', readHandler('intercept', async (body) => handleIntercept(cdp, body, config)));

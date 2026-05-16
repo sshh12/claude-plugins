@@ -11,7 +11,7 @@ const program = new Command();
 
 program
   .name('brw')
-  .version('0.7.2')
+  .version('0.8.0')
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--plain', 'Output as plain text instead of JSON')
@@ -322,6 +322,7 @@ program
   .option('--wait <strategy>', 'Wait strategy: none, dom, network, render')
   .option('--alias <name>', 'Assign alias to the new tab atomically (avoids race conditions)')
   .option('--window', 'Open in a new Chrome window instead of a tab')
+  .option('--viewport <WxH>', 'Override tab viewport before first paint (e.g. 1600x4000 for virtualized lists)')
   .option('--no-screenshot', 'Skip auto-screenshot (with --wait)')
   .action(async (url, opts) => {
     await run('POST', '/api/tabs/new', {
@@ -329,6 +330,7 @@ program
       wait: opts.wait,
       alias: opts.alias,
       window: opts.window,
+      viewport: opts.viewport,
       noScreenshot: opts.screenshot === false,
     });
   });
@@ -554,15 +556,34 @@ program
   .command('network')
   .allowUnknownOption()
   .description('Read captured network requests')
-  .option('--url-pattern <pattern>', 'Filter by URL pattern')
+  .option('--url-pattern <pattern...>', 'Filter by URL substring (repeatable; or comma-separated). Matches if any pattern matches.')
   .option('--limit <n>', 'Max requests to return')
   .option('--clear', 'Clear buffer after reading')
+  .option('--full', 'Include request headers and parsed body (auto-parses JSON / form-encoded JSON) in each entry')
+  .option('--with-body-preview [chars]', 'Fetch and inline the first N chars of each matched response body (default 300, max 2000)')
+  .option('--status <code...>', 'Filter by status code or class. Repeatable. Accepts exact (401) or class (4xx, 2xx, 5xx).')
   .action(async (opts) => {
+    let preview: number | undefined;
+    if (opts.withBodyPreview === true) preview = 300;
+    else if (typeof opts.withBodyPreview === 'string') preview = parseInt(opts.withBodyPreview, 10) || 300;
     await run('POST', '/api/network', {
       urlPattern: opts.urlPattern,
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       clear: opts.clear,
+      full: opts.full,
+      withBodyPreview: preview,
+      status: opts.status,
     });
+  });
+
+// ---- network-request ----
+
+program
+  .command('network-request <requestId>')
+  .allowUnknownOption()
+  .description('Show full captured request (method, url, headers, body)')
+  .action(async (requestId) => {
+    await run('POST', '/api/network-request', { requestId });
   });
 
 // ---- network-body ----
@@ -969,6 +990,149 @@ program
       target,
       params: Object.keys(params).length > 0 ? params : undefined,
       noScreenshot: opts.screenshot === false,
+    });
+  });
+
+// ---- auth-tokens ----
+
+program
+  .command('auth-tokens')
+  .allowUnknownOption()
+  .description('Enumerate session credentials (cookies, localStorage, sessionStorage, captured Authorization). Optionally probe an endpoint to confirm login state.')
+  .option('--verbose', 'Include httpOnly cookies too (not readable from JS, but auto-sent with credentials: \'include\')')
+  .option('--probe <url>', 'After listing tokens, fire a request to this URL from the page context. Status is reported and the likelyLoggedIn heuristic is refined.')
+  .option('--probe-method <method>', 'HTTP method for --probe (default GET)')
+  .option('--probe-body <body>', 'Request body for --probe (sent as application/json)')
+  .action(async (opts) => {
+    await run('POST', '/api/auth-tokens', {
+      verbose: !!opts.verbose,
+      probe: opts.probe,
+      probeMethod: opts.probeMethod,
+      probeBody: opts.probeBody,
+    });
+  });
+
+// ---- script ----
+
+const scriptCmd = program
+  .command('script')
+  .description('Run or generate a .js script that executes as the browser session');
+
+scriptCmd
+  .command('run [path]')
+  .allowUnknownOption()
+  .description('Run a .js script in the active tab as an async function (with cookies/auth). Path may be a file, "-" to read stdin, or omitted with --inline.')
+  .option('--param <kv...>', 'Script arguments as key=value pairs (accessible as `args` inside the script)')
+  .option('--frame <target>', 'Target iframe by index, name, or URL')
+  .option('--timeout <seconds>', 'Max seconds the script may run', '60')
+  .option('--output <path>', 'Write the JSON result envelope to this file')
+  .option('--inline <code>', 'Run the given JS source instead of a file path')
+  .action(async (path, opts) => {
+    const { readFileSync, existsSync } = await import('fs');
+    let source: string;
+
+    if (opts.inline) {
+      source = String(opts.inline);
+    } else if (path === '-' || (!path && !process.stdin.isTTY)) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+      source = Buffer.concat(chunks).toString('utf-8');
+    } else if (!path) {
+      process.stderr.write('Error: provide a file path, "-" for stdin, or --inline <code>\n');
+      process.exit(ExitCode.USAGE_ERROR);
+    } else {
+      if (!existsSync(path)) {
+        process.stderr.write(`Error: file not found: ${path}\n`);
+        process.exit(ExitCode.USAGE_ERROR);
+      }
+      source = readFileSync(path, 'utf-8');
+    }
+
+    const args: Record<string, string> = {};
+    if (opts.param) {
+      for (const kv of opts.param) {
+        const eqIdx = kv.indexOf('=');
+        if (eqIdx !== -1) {
+          args[kv.substring(0, eqIdx)] = kv.substring(eqIdx + 1);
+        }
+      }
+    }
+
+    const timeout = parseInt(opts.timeout, 10) || 60;
+
+    // Override stdout to capture the result then optionally save it
+    const body: Record<string, unknown> = {
+      source,
+      args: Object.keys(args).length > 0 ? args : undefined,
+      frame: opts.frame,
+      timeout,
+    };
+
+    if (opts.output) {
+      // When --output is set, write the full envelope to the file and print
+      // only a slim summary to stdout. Avoids dumping huge results into the
+      // caller's terminal/log.
+      const { proxyRequest, ensureProxy, formatOutput } = await import('./http.js');
+      const globals = getGlobalOpts();
+      if (body.tab === undefined && globals.tab) body.tab = globals.tab;
+      const extendedTimeout = Math.max(globals.timeout, timeout + 20);
+      try {
+        await ensureProxy(globals.port, extendedTimeout, globals.debug);
+        const result = await proxyRequest('POST', '/api/script/run', body, globals.port, extendedTimeout, globals.debug);
+        const { writeFileSync } = await import('fs');
+        let writtenBytes = 0;
+        let written = false;
+        try {
+          const json = JSON.stringify(result, null, 2);
+          writeFileSync(opts.output, json, 'utf-8');
+          writtenBytes = Buffer.byteLength(json, 'utf-8');
+          written = true;
+        } catch (err: any) {
+          process.stderr.write(`Warning: failed to write --output: ${err?.message}\n`);
+        }
+        const summary: any = {
+          ok: result.ok,
+          output: written ? opts.output : null,
+          bytesWritten: writtenBytes,
+          durationMs: result.durationMs,
+          logsCount: Array.isArray(result.logs) ? (result.logs as unknown[]).length : 0,
+        };
+        if (!result.ok) {
+          summary.error = result.error;
+          summary.code = result.code;
+          summary.hint = result.hint;
+        } else {
+          summary.hint = `Result written to ${opts.output}. Pretty-print with: jq . ${opts.output}`;
+        }
+        process.stdout.write(formatOutput(summary, globals.text) + '\n');
+        if (!result.ok) process.exit(ExitCode.CDP_ERROR);
+        return;
+      } catch (err: any) {
+        const result = { ok: false, error: err?.message || 'Request failed', code: 'PROXY_ERROR' };
+        process.stdout.write(formatOutput(result, globals.text) + '\n');
+        process.exit(ExitCode.PROXY_ERROR);
+      }
+    }
+
+    await run('POST', '/api/script/run', body);
+  });
+
+scriptCmd
+  .command('gen')
+  .allowUnknownOption()
+  .description('Generate a fetch-based .js script from captured network requests')
+  .option('--url-pattern <pattern...>', 'Filter requests by URL substring (repeatable; or comma-separated)')
+  .option('--method <method...>', 'Filter by HTTP method (repeatable)')
+  .option('--status-min <code>', 'Only include responses with status >= code')
+  .option('--limit <n>', 'Take the last N matching requests')
+  .option('--output <path>', 'Write the generated script to this file')
+  .action(async (opts) => {
+    await run('POST', '/api/script/gen', {
+      urlPattern: opts.urlPattern,
+      methods: opts.method,
+      statusMin: opts.statusMin ? parseInt(opts.statusMin, 10) : undefined,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      output: opts.output,
     });
   });
 

@@ -34,6 +34,7 @@ export class WhatsAppManager {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private qrHandler?: (qr: string) => void;
+  private messageHandler?: (msg: StoredMessage) => void;
   private contacts: Map<string, Contact> = new Map();
   private chats: Map<string, Chat> = new Map();
   private lidToPhone: Map<string, string> = new Map(); // LID JID → phone JID
@@ -52,12 +53,18 @@ export class WhatsAppManager {
    * Sets up all event handlers for connection, messages, contacts, and chats.
    *
    * @param options.onQr - Callback invoked when a QR code is received for pairing
+   * @param options.onMessage - Callback invoked for each live (non-history) inbound message.
+   *   Fires after the message has been stored in messageStore. Not called during history sync.
    * @returns Current connection status after initial setup
    */
-  async connect(options?: { onQr?: (qr: string) => void }): Promise<ConnectionStatus> {
+  async connect(options?: {
+    onQr?: (qr: string) => void;
+    onMessage?: (msg: StoredMessage) => void;
+  }): Promise<ConnectionStatus> {
     const logger = getGlobalLogger();
 
     this.qrHandler = options?.onQr;
+    this.messageHandler = options?.onMessage;
     audit("connection_attempt", {});
 
     // 1. Initialize auth state
@@ -126,6 +133,7 @@ export class WhatsAppManager {
     };
     this.reconnectAttempts = 0;
     this.qrHandler = undefined;
+    this.messageHandler = undefined;
 
     logger.info("WhatsApp disconnected");
     audit("disconnected", {});
@@ -239,6 +247,39 @@ export class WhatsAppManager {
   }
 
   /**
+   * Force a fresh reconnect. Tears down any existing socket, resets the
+   * backoff counter, and re-runs connect() with the same handlers.
+   * Use after `reconnectGaveUp` to wake the server back up.
+   */
+  async forceReconnect(): Promise<ConnectionStatus> {
+    const logger = getGlobalLogger();
+    logger.info("Force reconnect requested");
+    audit("force_reconnect", {});
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.sock) {
+      try {
+        this.sock.end(undefined);
+      } catch {
+        // ignore
+      }
+      this.sock = null;
+    }
+
+    this.reconnectAttempts = 0;
+    this.connectionStatus.reconnectAttempts = 0;
+    this.connectionStatus.reconnectScheduled = false;
+    this.connectionStatus.reconnectGaveUp = false;
+    this.connectionStatus.connected = false;
+
+    return this.connect({ onQr: this.qrHandler, onMessage: this.messageHandler });
+  }
+
+  /**
    * Resolve a JID to a phone-based JID if possible.
    * Converts @lid JIDs to @s.whatsapp.net using the contact cache.
    * Returns the original JID if no mapping is found.
@@ -344,6 +385,9 @@ export class WhatsAppManager {
         this.connectionStatus.connected = true;
         this.connectionStatus.authenticated = true;
         this.connectionStatus.lastConnected = Date.now();
+        this.connectionStatus.reconnectAttempts = 0;
+        this.connectionStatus.reconnectScheduled = false;
+        this.connectionStatus.reconnectGaveUp = false;
         this.reconnectAttempts = 0;
 
         // Extract user info from the socket
@@ -374,6 +418,10 @@ export class WhatsAppManager {
 
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
         const errorMessage = lastDisconnect?.error?.message ?? "unknown";
+
+        this.connectionStatus.lastDisconnected = Date.now();
+        this.connectionStatus.lastDisconnectCode = statusCode ?? "unknown";
+        this.connectionStatus.lastDisconnectReason = errorMessage;
 
         logger.warn("WhatsApp connection closed", {
           statusCode,
@@ -423,6 +471,8 @@ export class WhatsAppManager {
           stored.sender = this.resolveJid(stored.sender);
 
           this.messageStore.add(stored);
+          // Keep the raw Baileys WAMessage so download_attachment can use it
+          this.messageStore.putRaw(stored.id, msg);
 
           if (type === "notify") {
             logger.info("Message received", {
@@ -433,6 +483,16 @@ export class WhatsAppManager {
               messageType: stored.messageType,
               hasText: !!stored.text,
             });
+
+            // Push live messages to subscribers (e.g. MCP channel notifications).
+            // Do NOT push history-sync messages — that would flood Claude on reconnect.
+            if (this.messageHandler) {
+              try {
+                this.messageHandler(stored);
+              } catch (err: any) {
+                logger.warn("messageHandler threw", { error: err?.message });
+              }
+            }
           }
         }
       }
@@ -550,6 +610,8 @@ export class WhatsAppManager {
       logger.error("Max reconnect attempts reached, giving up", {
         attempts: this.reconnectAttempts,
       });
+      this.connectionStatus.reconnectScheduled = false;
+      this.connectionStatus.reconnectGaveUp = true;
       audit("reconnect_failed", { attempts: this.reconnectAttempts });
       return;
     }
@@ -559,6 +621,8 @@ export class WhatsAppManager {
       MAX_DELAY_MS
     );
     this.reconnectAttempts++;
+    this.connectionStatus.reconnectAttempts = this.reconnectAttempts;
+    this.connectionStatus.reconnectScheduled = true;
 
     logger.info("Scheduling reconnect", {
       attempt: this.reconnectAttempts,
@@ -570,7 +634,7 @@ export class WhatsAppManager {
       this.reconnectTimer = null;
       try {
         logger.info("Reconnecting to WhatsApp...", { attempt: this.reconnectAttempts });
-        await this.connect({ onQr: this.qrHandler });
+        await this.connect({ onQr: this.qrHandler, onMessage: this.messageHandler });
       } catch (err: any) {
         logger.error("Reconnect failed", {
           attempt: this.reconnectAttempts,

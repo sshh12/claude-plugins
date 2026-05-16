@@ -222,10 +222,35 @@ Dialogs auto-dismiss after 5 seconds if not handled explicitly.
 ```bash
 /tmp/brw console                           # Read captured console messages
 /tmp/brw console --errors-only             # Only errors
-/tmp/brw network                           # Read captured network requests
+/tmp/brw network                           # Read captured network requests (slim)
 /tmp/brw network --url-pattern "api"       # Filter by URL
+/tmp/brw network --full                    # Include request headers/body in each entry
+/tmp/brw network-request <request_id>      # Show full captured request (method, headers, body)
 /tmp/brw network-body <request_id>         # Get response body
 ```
+
+### Script Run & Generate
+
+For data extraction or batch workflows, drive the app's APIs from the page context rather than clicking through the DOM. The script runs in the active tab's runtime, so `fetch(..., { credentials: 'include' })` reuses the page's cookies, CSRF tokens, and session.
+
+```bash
+/tmp/brw script run /tmp/x.js [--param k=v] [--timeout 120] [--output /tmp/x.json]
+/tmp/brw script run --inline "return document.title"      # one-off
+/tmp/brw script run - <<'JS' ... JS                       # stdin
+/tmp/brw script gen --url-pattern <subs> --output /tmp/x.js   # starter from captured requests
+```
+
+Discovery companions:
+
+```bash
+/tmp/brw auth-tokens --tab <alias> [--probe <url>]         # list creds, decode JWTs, canary fetch
+/tmp/brw network --url-pattern A --url-pattern B --status 4xx --with-body-preview 300 --tab <alias>
+/tmp/brw network-request <id> --tab <alias>                # full single request, auto-parses JSON bodies
+```
+
+Globals injected inside `script run`: `args`, `log(...)`, `sleep(ms)`, `cookie(name)`, `xssiUnwrap(text)`, `gjson(responseOrText)`. Top-level `await` and `return <value>` work.
+
+**Full guide**: see `references/SCRIPT-WORKFLOW.md` for the 5-step discovery loop, auth/pagination/response-shape taxonomy, gotchas, and DOM fallback recipe.
 
 ### File Upload
 
@@ -333,6 +358,7 @@ Profiles live in `.claude/brw/profiles/<name>/` (repo) or `~/.config/brw/profile
 
 ## References
 
+- **Script workflow**: `references/SCRIPT-WORKFLOW.md` — DOM → API conversion playbook; auth/pagination/response-shape patterns; per-app cheat sheet
 - **Full command reference**: `references/COMMANDS.md` — all flags, output fields, and edge cases
 - **Security reference**: `references/SECURITY.md` — threat model, default protections, recommended configs
 - **Quick mode reference**: `references/QUICK-MODE.md` — command table and multi-step examples

@@ -21,7 +21,7 @@
     {
       "name": "whatsup",
       "source": "./plugins/whatsup",
-      "description": "WhatsApp messaging for Claude Code via Baileys WebSocket client"
+      "description": "WhatsApp MCP server for Claude Code via Baileys — bidirectional channel, allowlist-gated reply/react/edit/download tools"
     },
     {
       "name": "diy-mcp-connector",

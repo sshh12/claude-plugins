@@ -23,10 +23,12 @@ Gives Claude Code agents the ability to interact with web browsers through a CLI
 - Page accessibility tree reading with element refs and text search filtering
 - Form filling (by ref or CSS selector), text extraction, JavaScript execution
 - Conditional waiting (`wait-for` selector/text/URL/JS condition)
-- Tab management (create, switch, close, list)
+- Tab management (create, switch, close, list); per-tab viewport override at creation
 - Iframe targeting for read-page, JS execution, and form input
 - Browser dialog handling (alert, confirm, prompt) with auto-dismiss
-- Console and network monitoring, response body inspection
+- Console and network monitoring, response body inspection (with inline body previews + status/url filtering)
+- **Script-driven data extraction**: `script run` evaluates a `.js` file in the page's runtime (cookies + CSRF + auth available); `script gen` produces a fetch-based starter from captured network requests. Useful for paginating an inbox, exporting history, scraping behind login.
+- **Credential discovery**: `auth-tokens` enumerates session cookies / localStorage / sessionStorage / captured Authorization headers, decodes JWT claims, optionally fires a probe to confirm login state
 - Network request interception and mocking
 - Cookie and localStorage/sessionStorage management
 - GIF recording of browser actions with click/drag overlays
@@ -74,6 +76,7 @@ Once installed, Claude will automatically use `brw` when you ask it to interact 
 - "Navigate to our staging app and check if the signup flow works"
 - "Record a GIF of the checkout process on our dev server"
 - "Test the mobile layout of our landing page"
+- "Pull a list of all my LinkedIn messages into a JSON file" — uses the script feature: capture the API call, generate a fetch-based starter, paginate, save structured data. See `skills/brw/references/SCRIPT-WORKFLOW.md`.
 
 ## Configuration
 

@@ -79,6 +79,7 @@ export const ErrorCode = {
   FRAME_NOT_FOUND: 'FRAME_NOT_FOUND',
   NETWORK_REQUEST_NOT_FOUND: 'NETWORK_REQUEST_NOT_FOUND',
   JS_ERROR: 'JS_ERROR',
+  SCRIPT_ERROR: 'SCRIPT_ERROR',
   INTERCEPT_ERROR: 'INTERCEPT_ERROR',
   PROFILE_NOT_FOUND: 'PROFILE_NOT_FOUND',
   COMMAND_DISABLED: 'COMMAND_DISABLED',
@@ -118,6 +119,12 @@ export interface NetworkRequest {
   status: number;
   duration: number;
   size: number;
+  /** Request headers captured at requestWillBeSent (may be limited by CDP). */
+  requestHeaders?: Record<string, string>;
+  /** Request POST body if present. Truncated at MAX_POST_DATA_SIZE. */
+  requestBody?: string;
+  /** Resource type (Document, XHR, Fetch, Script, etc.) when available. */
+  resourceType?: string;
 }
 
 // ---- Dialog ----
