@@ -1,6 +1,6 @@
 {
   "name": "whatsup",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "WhatsApp MCP server for Claude Code via Baileys — bidirectional channel with allowlist gating, push notifications, and the reply/react/edit/download tool surface",
   "author": {
     "name": "shrivu"

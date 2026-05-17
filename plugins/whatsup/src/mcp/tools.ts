@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { downloadMediaMessage } from "baileys";
 import type { WAMessage } from "baileys";
-import type { ApiResponse, WhatsUpConfig } from "../shared/types.js";
+import type { ApiResponse, WhatsUpConfig, ConnectorRole } from "../shared/types.js";
 import { ErrorCode } from "../shared/types.js";
 import type { WhatsAppManager } from "../proxy/whatsapp.js";
 import type { MessageStore } from "../proxy/message-store.js";
@@ -37,6 +37,10 @@ export interface ToolCtx {
   config: WhatsUpConfig;
   messageStore: MessageStore;
   rateLimiter: RateLimiter;
+  // Functions, not values: role flips on standby→connector promotion after
+  // ctx is constructed, so callers must read it live.
+  role: () => ConnectorRole;
+  lockHolderPid: () => number | null;
 }
 
 // ---- Definitions surfaced to the MCP client ----
@@ -112,7 +116,7 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "status",
     description:
-      "Get WhatsApp connection state. Returns connected, authenticated, phone, pushName, the QR file path if pairing is pending, and reconnect diagnostics (lastDisconnectReason, reconnectAttempts, reconnectScheduled, reconnectGaveUp).",
+      "Get WhatsApp connection state. Returns connected, authenticated, phone, pushName, the QR file path if pairing is pending, reconnect diagnostics (lastDisconnectReason, reconnectAttempts, reconnectScheduled, reconnectGaveUp), and the connector-lease fields: role ('connector' owns the socket; 'standby' is read-only, another instance owns it — lockHolderPid names it), and replacedByOtherInstance (true when an external WhatsApp Web/phone session took the socket; call reconnect to retake it).",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -231,6 +235,22 @@ function checkConnected(wa: WhatsAppManager): ApiResponse | null {
   };
 }
 
+/**
+ * Standby instances do not own the WhatsApp socket. Build a clear, non-throwing
+ * response explaining that, naming the connector pid when known.
+ */
+function standbyResponse(ctx: ToolCtx, action: string): ApiResponse {
+  const pid = ctx.lockHolderPid();
+  return {
+    ok: false,
+    error: `This whatsup instance is on standby — another instance owns the WhatsApp socket, so it cannot ${action}.`,
+    code: ErrorCode.STANDBY,
+    hint: pid
+      ? `The connector is pid ${pid}. This agent auto-promotes (and gains send) if that instance exits or dies.`
+      : `This agent auto-promotes (and gains send) if the connector exits or dies.`,
+  };
+}
+
 async function runWrite(
   ctx: ToolCtx,
   commandName: string,
@@ -239,6 +259,10 @@ async function runWrite(
 ): Promise<ApiResponse> {
   const disabled = checkDisabled(commandName, ctx.config);
   if (disabled) return disabled;
+
+  // A standby process must never open/use the socket. Reject before the
+  // connection check so the error names the real cause, not "not connected".
+  if (ctx.role() === "standby") return standbyResponse(ctx, "send");
 
   const conn = checkConnected(ctx.wa);
   if (conn) return conn;
@@ -270,10 +294,29 @@ async function runWrite(
 async function runRead(
   ctx: ToolCtx,
   commandName: string,
-  fn: () => Promise<ApiResponse>
+  fn: () => Promise<ApiResponse>,
+  // Store-backed reads (read_chat/search/unreplied) serve the history buffer,
+  // which server.ts hydrates from the shared JSONL at startup even for
+  // standby. Socket-cache reads (list_chats/contacts) cannot.
+  standbyOk = false
 ): Promise<ApiResponse> {
   const disabled = checkDisabled(commandName, ctx.config);
   if (disabled) return disabled;
+
+  if (ctx.role() === "standby") {
+    if (!standbyOk) return standbyResponse(ctx, "list live chats/contacts");
+    // Serve the hydrated buffer; the socket is owned by the connector.
+    const start = Date.now();
+    try {
+      const result = await fn();
+      audit("command", { command: commandName, ok: result.ok, duration: Date.now() - start, standby: true });
+      return result;
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      audit("command_error", { command: commandName, error: message, standby: true });
+      return { ok: false, error: message, code: ErrorCode.SOCKET_ERROR };
+    }
+  }
 
   const conn = checkConnected(ctx.wa);
   if (conn) return conn;
@@ -349,6 +392,22 @@ async function callReply(ctx: ToolCtx, args: any): Promise<ApiResponse> {
     };
   }
 
+  // Resolve the full raw message to quote. Baileys needs the whole WAMessage
+  // (it carries key.participant for groups); a bare { key } shape crashes
+  // generateWAMessage. If the message isn't in the in-session raw buffer
+  // (evicted, or from a prior session), fail soft: send without the quote and
+  // surface a warning rather than throwing SEND_FAILED.
+  let quotedMsg: WAMessage | undefined;
+  let quoteWarning: string | undefined;
+  if (replyTo) {
+    quotedMsg = ctx.messageStore.getRaw(replyTo);
+    if (!quotedMsg) {
+      quoteWarning =
+        `Could not quote message ${replyTo}: not in the in-session raw buffer ` +
+        `(evicted or from a prior session). Message sent without the quoted reply.`;
+    }
+  }
+
   const sentIds: string[] = [];
 
   // Files first, then text — text doubles as caption only when there's a single file
@@ -359,7 +418,7 @@ async function callReply(ctx: ToolCtx, args: any): Promise<ApiResponse> {
         to: target,
         path,
         caption: !text && files.length === 1 ? undefined : undefined,
-        quote: replyTo,
+        quote: quotedMsg,
       })
     );
     if (!result.ok) return result;
@@ -371,7 +430,7 @@ async function callReply(ctx: ToolCtx, args: any): Promise<ApiResponse> {
       handleSend(ctx.wa, ctx.config, {
         to: target,
         message: text,
-        quote: files.length === 0 ? replyTo : undefined,
+        quote: files.length === 0 ? quotedMsg : undefined,
       })
     );
     if (!result.ok) return result;
@@ -397,7 +456,9 @@ async function callReply(ctx: ToolCtx, args: any): Promise<ApiResponse> {
     appendHistoryMessage(ctx.config.historyFile, synthetic);
   }
 
-  return { ok: true, messageIds: sentIds };
+  const resp: ApiResponse = { ok: true, messageIds: sentIds };
+  if (quoteWarning) resp.warning = quoteWarning;
+  return resp;
 }
 
 async function callReact(ctx: ToolCtx, args: any): Promise<ApiResponse> {
@@ -515,9 +576,19 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
   const creds = hasCredentials(ctx.config.authDir);
   const ready = ctx.wa.isReady();
 
+  const role = ctx.role();
+
   // Pick a one-line diagnostic for Claude to relay to the user.
   let diagnosis: string;
-  if (ready) {
+  if (role === "standby") {
+    const pid = ctx.lockHolderPid();
+    diagnosis = pid
+      ? `standby — another whatsup instance (pid ${pid}) owns the WhatsApp socket; this instance takes over if it exits`
+      : "standby — another whatsup instance owns the WhatsApp socket; this instance takes over if it exits";
+  } else if (status.replacedByOtherInstance) {
+    diagnosis =
+      "another session/instance replaced this connection — not auto-reconnecting; call the reconnect tool to retake it";
+  } else if (ready) {
     diagnosis = "connected and ready";
   } else if (!creds) {
     diagnosis = "no credentials — pair the device by scanning the QR file";
@@ -536,6 +607,7 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
   return {
     ok: true,
     diagnosis,
+    role,
     ready,
     connected: status.connected,
     authenticated: status.authenticated,
@@ -550,6 +622,8 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
     reconnectAttempts: status.reconnectAttempts ?? 0,
     reconnectScheduled: status.reconnectScheduled ?? false,
     reconnectGaveUp: status.reconnectGaveUp ?? false,
+    replacedByOtherInstance: status.replacedByOtherInstance ?? false,
+    lockHolderPid: ctx.lockHolderPid(),
     allowlist: ctx.config.allowlist,
     allowlistGroups: ctx.config.allowlistGroups,
     readMode: ctx.config.readMode,
@@ -557,6 +631,10 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
 }
 
 async function callReconnect(ctx: ToolCtx): Promise<ApiResponse> {
+  // A standby must not open a socket — the connector owns it. Reconnecting
+  // here would re-introduce the multi-socket conflict this lease prevents.
+  if (ctx.role() === "standby") return standbyResponse(ctx, "reconnect");
+
   if (!hasCredentials(ctx.config.authDir)) {
     return {
       ok: false,
@@ -608,7 +686,7 @@ async function callUnreplied(ctx: ToolCtx, args: any): Promise<ApiResponse> {
       .map((m) => filterMessageForOutput(m, ctx.config));
 
     return { ok: true, messages: pending };
-  });
+  }, true);
 }
 
 async function callListChats(ctx: ToolCtx, args: any): Promise<ApiResponse> {
@@ -625,13 +703,17 @@ async function callReadChat(ctx: ToolCtx, args: any): Promise<ApiResponse> {
   if (!chatId) {
     return { ok: false, error: "chat_id is required", code: ErrorCode.INVALID_ARGUMENT };
   }
-  return runRead(ctx, "read-chat", () =>
-    handleReadChat(
-      ctx.wa,
-      ctx.config,
-      { chatId, limit: args.limit, before: args.before },
-      ctx.messageStore
-    )
+  return runRead(
+    ctx,
+    "read-chat",
+    () =>
+      handleReadChat(
+        ctx.wa,
+        ctx.config,
+        { chatId, limit: args.limit, before: args.before },
+        ctx.messageStore
+      ),
+    true
   );
 }
 
@@ -640,13 +722,17 @@ async function callSearch(ctx: ToolCtx, args: any): Promise<ApiResponse> {
   if (!query) {
     return { ok: false, error: "query is required", code: ErrorCode.INVALID_ARGUMENT };
   }
-  return runRead(ctx, "search", () =>
-    handleSearch(
-      ctx.wa,
-      ctx.config,
-      { query, chat: args.chat, from: args.from, limit: args.limit },
-      ctx.messageStore
-    )
+  return runRead(
+    ctx,
+    "search",
+    () =>
+      handleSearch(
+        ctx.wa,
+        ctx.config,
+        { query, chat: args.chat, from: args.from, limit: args.limit },
+        ctx.messageStore
+      ),
+    true
   );
 }
 

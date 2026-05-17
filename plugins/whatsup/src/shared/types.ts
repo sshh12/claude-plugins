@@ -18,6 +18,7 @@ export enum ErrorCode {
   NOT_CONNECTED = "NOT_CONNECTED",
   TIMEOUT = "TIMEOUT",
   FILE_NOT_FOUND = "FILE_NOT_FOUND",
+  STANDBY = "STANDBY",
 }
 
 // ---- API Response ----
@@ -27,6 +28,7 @@ export interface ApiResponse {
   error?: string;
   code?: ErrorCode;
   hint?: string;
+  warning?: string;
   [key: string]: any;
 }
 
@@ -53,7 +55,13 @@ export interface WhatsUpConfig {
   historyFile: string;           // JSONL persistent message log
   historyRetentionDays: number;  // prune entries older than this on startup
   historyLoadLimit: number;      // how many recent entries to load into the in-memory buffer
+  connectorLockFile: string;     // heartbeat lease lock — only the holder opens a WA socket
 }
+
+// Which role this MCP process plays for the shared WhatsApp connection.
+// "connector" holds the lease and owns the single socket; "standby" does not
+// open a socket and serves read-only tools off the on-disk history.
+export type ConnectorRole = "connector" | "standby";
 
 // Config entry with source tracking
 export type ConfigSource = "default" | "user" | "repo" | "env";
@@ -121,6 +129,10 @@ export interface ConnectionStatus {
   reconnectAttempts?: number;
   reconnectScheduled?: boolean;
   reconnectGaveUp?: boolean;
+  // Set when a 440 connectionReplaced arrives while we hold the connector
+  // lease — i.e. an external WhatsApp Web/phone session stole the socket.
+  // We deliberately do NOT auto-reconnect; the reconnect tool clears this.
+  replacedByOtherInstance?: boolean;
 }
 
 // ---- Security Warnings ----

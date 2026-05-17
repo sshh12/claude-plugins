@@ -38,6 +38,11 @@ export class WhatsAppManager {
   private contacts: Map<string, Contact> = new Map();
   private chats: Map<string, Chat> = new Map();
   private lidToPhone: Map<string, string> = new Map(); // LID JID → phone JID
+  // True when this process owns the connector lease. Used to decide whether a
+  // 440 (connectionReplaced) came from an external WhatsApp Web/phone session
+  // (we hold the lease → don't fight it) vs. ordinary churn. Defaults true so
+  // single-process usage and tests behave unchanged.
+  private holdsLock: () => boolean = () => true;
 
   constructor(config: WhatsUpConfig, messageStore: MessageStore) {
     this.config = config;
@@ -144,6 +149,15 @@ export class WhatsAppManager {
    */
   getStatus(): ConnectionStatus {
     return { ...this.connectionStatus };
+  }
+
+  /**
+   * Set the predicate that reports whether this process holds the connector
+   * lease. Wired from the MCP server so 440 handling can distinguish an
+   * external replacer from another whatsup instance.
+   */
+  setLockPredicate(fn: () => boolean): void {
+    this.holdsLock = fn;
   }
 
   /**
@@ -274,6 +288,7 @@ export class WhatsAppManager {
     this.connectionStatus.reconnectAttempts = 0;
     this.connectionStatus.reconnectScheduled = false;
     this.connectionStatus.reconnectGaveUp = false;
+    this.connectionStatus.replacedByOtherInstance = false;
     this.connectionStatus.connected = false;
 
     return this.connect({ onQr: this.qrHandler, onMessage: this.messageHandler });
@@ -388,6 +403,7 @@ export class WhatsAppManager {
         this.connectionStatus.reconnectAttempts = 0;
         this.connectionStatus.reconnectScheduled = false;
         this.connectionStatus.reconnectGaveUp = false;
+        this.connectionStatus.replacedByOtherInstance = false;
         this.reconnectAttempts = 0;
 
         // Extract user info from the socket
@@ -443,8 +459,22 @@ export class WhatsAppManager {
           } catch (err: any) {
             logger.error("Failed to clear credentials after logout", { error: err?.message });
           }
+        } else if (statusCode === DisconnectReason.connectionReplaced && this.holdsLock()) {
+          // 440 connectionReplaced while we hold the connector lease: the
+          // replacer is an EXTERNAL WhatsApp Web / phone / linked-device
+          // session, not another whatsup instance (the lease guarantees that).
+          // Auto-reconnecting would just ping-pong with that external session,
+          // so we yield and surface a distinct status. The reconnect tool
+          // (forceReconnect) clears this flag to retake the socket.
+          this.connectionStatus.replacedByOtherInstance = true;
+          this.connectionStatus.reconnectScheduled = false;
+          logger.warn(
+            "Connection replaced by another session (440) — not auto-reconnecting"
+          );
+          audit("connection_replaced_external", {});
         } else if (this.config.autoReconnect) {
-          // Attempt reconnect for non-logout disconnects
+          // Attempt reconnect for ordinary disconnects (network blips, 515
+          // restartRequired, etc.)
           this.scheduleReconnect();
         }
       }

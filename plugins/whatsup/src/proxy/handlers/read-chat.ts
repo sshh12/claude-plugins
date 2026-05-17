@@ -13,9 +13,9 @@ export async function handleReadChat(
   },
   messageStore: MessageStore
 ): Promise<ApiResponse> {
-  if (!wa.isReady()) {
-    return { ok: false, error: "WhatsApp not connected", code: ErrorCode.NOT_CONNECTED };
-  }
+  // No isReady() guard: this reads only the message buffer. The caller
+  // (runRead) already gates the connected path; standby serves the buffer
+  // hydrated from the shared history JSONL.
 
   const limit = params.limit ?? 50;
 

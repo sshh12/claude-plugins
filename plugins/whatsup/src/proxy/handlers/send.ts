@@ -1,3 +1,4 @@
+import type { WAMessage } from "baileys";
 import { WhatsUpConfig, ApiResponse, ErrorCode } from "../../shared/types.js";
 import type { WhatsAppManager } from "../whatsapp.js";
 import { phoneToJid } from "../allowlist.js";
@@ -15,7 +16,10 @@ export async function handleSend(
   params: {
     to: string;
     message: string;
-    quote?: string;
+    // Full Baileys message to quote. Resolved by the caller from the raw
+    // store; passing a full WAMessage is the Baileys contract (a bare
+    // { key } shape crashes generateWAMessage).
+    quote?: WAMessage;
     mentions?: string[];
   }
 ): Promise<ApiResponse> {
@@ -32,7 +36,7 @@ export async function handleSend(
 
   const options: Record<string, unknown> = {};
   if (params.quote) {
-    options.quoted = { key: { remoteJid: jid, id: params.quote } };
+    options.quoted = params.quote;
   }
 
   try {

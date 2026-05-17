@@ -14,9 +14,8 @@ export async function handleSearch(
   },
   messageStore: MessageStore
 ): Promise<ApiResponse> {
-  if (!wa.isReady()) {
-    return { ok: false, error: "WhatsApp not connected", code: ErrorCode.NOT_CONNECTED };
-  }
+  // No isReady() guard: this reads only the message buffer (see read-chat.ts).
+  // runRead gates the connected path; standby serves the hydrated buffer.
 
   if (!params.query) {
     return { ok: false, error: "query is required", code: ErrorCode.INVALID_ARGUMENT };

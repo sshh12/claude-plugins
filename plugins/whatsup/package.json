@@ -1,6 +1,6 @@
 {
   "name": "whatsup",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "WhatsApp MCP server for Claude Code via Baileys WebSocket client",
   "scripts": {

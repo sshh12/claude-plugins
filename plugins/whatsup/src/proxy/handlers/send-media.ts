@@ -1,5 +1,6 @@
 import { readFile, stat } from "fs/promises";
 import { extname, resolve, normalize } from "path";
+import type { WAMessage } from "baileys";
 import { WhatsUpConfig, ApiResponse, ErrorCode } from "../../shared/types.js";
 import type { WhatsAppManager } from "../whatsapp.js";
 import { phoneToJid } from "../allowlist.js";
@@ -52,7 +53,8 @@ export async function handleSendMedia(
     path: string;
     caption?: string;
     type?: "image" | "video" | "audio" | "document";
-    quote?: string;
+    // Full Baileys message to quote (resolved by caller from the raw store).
+    quote?: WAMessage;
     viewOnce?: boolean;
     fileName?: string;
   }
@@ -130,7 +132,7 @@ export async function handleSendMedia(
 
   const options: Record<string, unknown> = {};
   if (params.quote) {
-    options.quoted = { key: { remoteJid: jid, id: params.quote } };
+    options.quoted = params.quote;
   }
 
   try {

@@ -32,6 +32,7 @@ const DEFAULTS: WhatsUpConfig = {
   historyFile: join(homedir(), ".config", "whatsup", "messages.jsonl"),
   historyRetentionDays: 90,
   historyLoadLimit: 5000,
+  connectorLockFile: join(homedir(), ".config", "whatsup", "connector.lock"),
 };
 
 // ---- Config File Shape ----
@@ -57,6 +58,7 @@ interface ConfigFile {
   historyFile?: string;
   historyRetentionDays?: number;
   historyLoadLimit?: number;
+  connectorLockFile?: string;
 }
 
 /**
@@ -69,6 +71,7 @@ const LOCKED_FROM_REPO: ReadonlySet<keyof ConfigFile> = new Set([
   "auditLog",
   "qrCodeFile",
   "historyFile",
+  "connectorLockFile",
 ]);
 
 /** Security warnings accumulated during the last resolveConfig() call. */
@@ -506,6 +509,13 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
       repoConfig?.historyLoadLimit,
       userConfig?.historyLoadLimit,
       DEFAULTS.historyLoadLimit
+    ),
+    connectorLockFile: resolveLockedString(
+      "connectorLockFile",
+      env.WHATSUP_CONNECTOR_LOCK_FILE,
+      repoConfig?.connectorLockFile,
+      userConfig?.connectorLockFile,
+      DEFAULTS.connectorLockFile
     ),
   };
 }

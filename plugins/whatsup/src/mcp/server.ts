@@ -21,6 +21,8 @@ import {
 } from "../proxy/history-store.js";
 import { TOOL_DEFS, callTool, type ToolCtx } from "./tools.js";
 import { pushIncoming, pushSystem } from "./notifications.js";
+import { ConnectorLock, STANDBY_POLL_MS } from "../proxy/connector-lock.js";
+import type { ConnectorRole } from "../shared/types.js";
 
 const SERVER_INSTRUCTIONS = [
   "Inbound WhatsApp messages arrive as `notifications/claude/channel` events with a `meta` block carrying `chat_id`, `message_id`, `user`, `user_id`, `ts`, and `chat_type`. Reply through the `reply` tool — your transcript output never reaches the sender.",
@@ -84,8 +86,16 @@ async function main(): Promise<void> {
   const rateLimiter = new RateLimiter(config);
   const wa = new WhatsAppManager(config, messageStore);
 
+  // Connector lease: only the lock holder opens a WhatsApp socket. Other
+  // processes (multi-agent teams spawn one MCP server each) run read-only
+  // standby and auto-promote if the holder exits/dies. Prevents the
+  // multi-socket 440 (connectionReplaced) crash loop.
+  const lock = new ConnectorLock(config.connectorLockFile, logger);
+  let role: ConnectorRole = lock.tryAcquire() ? "connector" : "standby";
+  wa.setLockPredicate(() => role === "connector");
+
   const mcp = new Server(
-    { name: "whatsup", version: "0.2.0" },
+    { name: "whatsup", version: "0.3.0" },
     {
       capabilities: {
         tools: {},
@@ -102,6 +112,8 @@ async function main(): Promise<void> {
     config,
     messageStore,
     rateLimiter,
+    role: () => role,
+    lockHolderPid: () => lock.readHolderPid(),
   };
 
   // ---- Tool handlers ----
@@ -127,38 +139,97 @@ async function main(): Promise<void> {
   // ---- WhatsApp connection ----
   // Fire-and-forget connect: events surface asynchronously.
   // Setup-time errors come back through channel notifications.
-  wa.connect({
-    onQr: (_qr) => {
-      logger.info("QR code generated", { path: config.qrCodeFile });
-      pushSystem(
-        mcp,
-        [
-          `WhatsApp pairing required. A QR code has been written to:`,
-          `  ${config.qrCodeFile}`,
-          ``,
-          `Scan it: WhatsApp → Settings → Linked Devices → Link a Device.`,
-          `On macOS: \`open ${config.qrCodeFile}\``,
-        ].join("\n")
-      );
-    },
-    onMessage: (msg) => {
-      // Persist every live message — both inbound and our own echoes from
-      // Baileys. pushIncoming will filter echoes and non-allowlisted senders
-      // from the Claude-facing channel, but the history file keeps both so
-      // unreplied can compute "messages since last outbound".
-      appendHistoryMessage(config.historyFile, msg);
-      pushIncoming(mcp, msg, config);
-    },
-  }).catch((err) => {
-    logger.error("Initial WhatsApp connect failed", {
-      error: err instanceof Error ? err.message : String(err),
+  const startConnection = () =>
+    wa.connect({
+      onQr: (_qr) => {
+        logger.info("QR code generated", { path: config.qrCodeFile });
+        pushSystem(
+          mcp,
+          [
+            `WhatsApp pairing required. A QR code has been written to:`,
+            `  ${config.qrCodeFile}`,
+            ``,
+            `Scan it: WhatsApp → Settings → Linked Devices → Link a Device.`,
+            `On macOS: \`open ${config.qrCodeFile}\``,
+          ].join("\n")
+        );
+      },
+      onMessage: (msg) => {
+        // Persist every live message — both inbound and our own echoes from
+        // Baileys. pushIncoming will filter echoes and non-allowlisted senders
+        // from the Claude-facing channel, but the history file keeps both so
+        // unreplied can compute "messages since last outbound".
+        appendHistoryMessage(config.historyFile, msg);
+        pushIncoming(mcp, msg, config);
+      },
     });
-  });
+
+  let standbyTimer: ReturnType<typeof setInterval> | null = null;
+
+  const startStandbyPoll = () => {
+    if (standbyTimer) return;
+    standbyTimer = setInterval(() => {
+      if (role !== "standby") return;
+      if (lock.tryAcquire()) {
+        role = "connector";
+        if (standbyTimer) {
+          clearInterval(standbyTimer);
+          standbyTimer = null;
+        }
+        lock.startHeartbeat(onLost);
+        logger.info("Promoted standby → connector");
+        pushSystem(mcp, "whatsup promoted to connector — opening WhatsApp socket.");
+        startConnection().catch((err) =>
+          logger.error("WhatsApp connect after promotion failed", {
+            error: err instanceof Error ? err.message : String(err),
+          })
+        );
+      }
+    }, STANDBY_POLL_MS);
+    standbyTimer.unref();
+  };
+
+  // Called when the heartbeat detects a foreign pid owns the lock (we stalled
+  // and a standby promoted): drop our socket and demote so there is never
+  // more than one live socket.
+  const onLost = () => {
+    if (role !== "connector") return;
+    logger.warn("Lost connector lease — demoting to standby");
+    role = "standby";
+    wa.disconnect().catch(() => {});
+    pushSystem(
+      mcp,
+      "whatsup demoted to standby — another instance took the connector lease."
+    );
+    startStandbyPoll();
+  };
+
+  if (role === "connector") {
+    lock.startHeartbeat(onLost);
+    startConnection().catch((err) => {
+      logger.error("Initial WhatsApp connect failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  } else {
+    const holderPid = lock.readHolderPid();
+    logger.info("Starting in standby — another instance owns the connector lease", {
+      holderPid,
+    });
+    pushSystem(
+      mcp,
+      `whatsup standby — another instance${holderPid ? ` (pid ${holderPid})` : ""} owns the WhatsApp socket. ` +
+        `This agent has read-only access (read_chat/search/unreplied work off buffered history) ` +
+        `and will take over if that instance exits.`
+    );
+    startStandbyPoll();
+  }
 
   // Emit a one-shot system notification once authenticated.
   let announcedReady = false;
   const readyTimer = setInterval(() => {
     if (announcedReady) return;
+    if (role !== "connector") return;
     if (wa.isReady()) {
       announcedReady = true;
       pushSystem(
@@ -177,6 +248,14 @@ async function main(): Promise<void> {
     logger.info(`Shutdown requested (${signal})`);
     audit("mcp_stop", { signal });
     clearInterval(readyTimer);
+    if (standbyTimer) clearInterval(standbyTimer);
+    // Release the connector lease so a standby can promote immediately
+    // instead of waiting out the stale-heartbeat window.
+    try {
+      lock.release();
+    } catch {
+      // best effort
+    }
     try {
       await wa.disconnect();
     } catch {
