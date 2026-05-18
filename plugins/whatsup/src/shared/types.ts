@@ -18,7 +18,7 @@ export enum ErrorCode {
   NOT_CONNECTED = "NOT_CONNECTED",
   TIMEOUT = "TIMEOUT",
   FILE_NOT_FOUND = "FILE_NOT_FOUND",
-  STANDBY = "STANDBY",
+  DAEMON_UNREACHABLE = "DAEMON_UNREACHABLE",
 }
 
 // ---- API Response ----
@@ -35,17 +35,14 @@ export interface ApiResponse {
 // ---- Configuration ----
 
 export interface WhatsUpConfig {
-  proxyPort: number;
   authDir: string;
   allowlist: string[];           // E.164 phone numbers
   allowlistGroups: string[];     // group JIDs
-  idleTimeout: number;           // seconds
   logFile: string;
   auditLog: string;              // defaults to ~/.config/whatsup/audit.jsonl
   disabledCommands: string[];
   messageBufferSize: number;
   mediaDownloadDir: string;
-  pollTimeout: number;           // seconds
   autoReconnect: boolean;
   qrCodeFile: string;
   readMode: "allowlist" | "all";
@@ -55,13 +52,8 @@ export interface WhatsUpConfig {
   historyFile: string;           // JSONL persistent message log
   historyRetentionDays: number;  // prune entries older than this on startup
   historyLoadLimit: number;      // how many recent entries to load into the in-memory buffer
-  connectorLockFile: string;     // heartbeat lease lock — only the holder opens a WA socket
+  daemonSocketFile: string;      // Unix socket the in-process owner listens on
 }
-
-// Which role this MCP process plays for the shared WhatsApp connection.
-// "connector" holds the lease and owns the single socket; "standby" does not
-// open a socket and serves read-only tools off the on-disk history.
-export type ConnectorRole = "connector" | "standby";
 
 // Config entry with source tracking
 export type ConfigSource = "default" | "user" | "repo" | "env";
@@ -129,9 +121,9 @@ export interface ConnectionStatus {
   reconnectAttempts?: number;
   reconnectScheduled?: boolean;
   reconnectGaveUp?: boolean;
-  // Set when a 440 connectionReplaced arrives while we hold the connector
-  // lease — i.e. an external WhatsApp Web/phone session stole the socket.
-  // We deliberately do NOT auto-reconnect; the reconnect tool clears this.
+  // Set when a 440 connectionReplaced arrives — an external WhatsApp Web /
+  // phone session took the socket from the owner. We deliberately do NOT
+  // auto-reconnect (it would ping-pong); the reconnect tool clears this.
   replacedByOtherInstance?: boolean;
 }
 

@@ -13,9 +13,9 @@ export async function handleReadChat(
   },
   messageStore: MessageStore
 ): Promise<ApiResponse> {
-  // No isReady() guard: this reads only the message buffer. The caller
-  // (runRead) already gates the connected path; standby serves the buffer
-  // hydrated from the shared history JSONL.
+  // No isReady() guard: this reads only the in-memory message buffer
+  // (hydrated from the history JSONL on startup). runRead gates the
+  // connected path; this handler just serves the buffer.
 
   const limit = params.limit ?? 50;
 

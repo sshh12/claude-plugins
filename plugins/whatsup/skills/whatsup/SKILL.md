@@ -25,7 +25,8 @@ whatsup is an MCP server that bridges Claude Code to a personal WhatsApp account
 
 1. Call `status` — confirms connection state and surfaces `qrCodeFile` if pairing is pending.
 2. If `hasCredentials: false`, tell the user to scan the QR file (e.g. `open /tmp/whatsup-qr.png`) under **WhatsApp → Settings → Linked Devices → Link a Device**. Do not proceed until status shows `connected: true, authenticated: true`.
-3. Call `unreplied` — catches up on messages that arrived before this session.
+3. If this agent handles WhatsApp, call `subscribe` — live inbound messages are delivered only to subscribed sessions (it survives owner handoff).
+4. Call `unreplied` — catches up on messages that arrived before this session.
 
 ## Tool reference
 
@@ -35,8 +36,9 @@ whatsup is an MCP server that bridges Claude Code to a personal WhatsApp account
 | `react` | Add or clear an emoji reaction. Required: `chat_id`, `message_id`, `emoji` (empty string to clear). |
 | `edit_message` | Edit a message this account previously sent. Required: `chat_id`, `message_id`, `text`. |
 | `download_attachment` | Fetch an inbound media attachment to disk by `file_id` (== inbound `message_id`). Returns a local path; Read it afterwards. |
-| `status` | Connection state, phone, pushName, allowlist summary, qrCodeFile when pairing, and reconnect diagnostics (`diagnosis`, `reconnectAttempts`, `reconnectScheduled`, `reconnectGaveUp`, `lastDisconnectReason`). |
-| `reconnect` | Force a fresh WhatsApp socket. Use when `status` shows `connected: false` with `authenticated: true`, or `reconnectGaveUp: true`. |
+| `status` | Connection state, phone, pushName, allowlist summary, qrCodeFile when pairing, reconnect diagnostics (`diagnosis`, `reconnectAttempts`, `reconnectScheduled`, `reconnectGaveUp`, `lastDisconnectReason`, `replacedByOtherInstance`), and this session's `role` (`owner`/`proxy`) + `ownerPid`. |
+| `reconnect` | Force a fresh WhatsApp socket. Use when `status` shows `connected: false` with `authenticated: true`, `reconnectGaveUp: true`, or `replacedByOtherInstance: true`. |
+| `subscribe` / `unsubscribe` | Opt this session in/out of live inbound message delivery. Idempotent; the intent survives owner handoff. |
 | `unreplied` | Inbound messages received this session not yet replied to. Optional `chat_id` filter. |
 | `list_chats` | Recent chats with timestamps + unread counts. Optional `limit`, `unread_only`. |
 | `read_chat` | Recent buffered messages for a chat. Required: `chat_id`. Optional: `limit`, `before`. |
@@ -57,6 +59,7 @@ whatsup is an MCP server that bridges Claude Code to a personal WhatsApp account
 |---|---|---|
 | `NOT_AUTHENTICATED` | Device not paired (no credentials) | Call `status`, surface QR file path, user re-pairs. |
 | `NOT_CONNECTED` | Paired but socket is currently down | Read the hint — if reconnect is in flight, wait; otherwise call the `reconnect` tool. |
+| `DAEMON_UNREACHABLE` | The session that owns the WhatsApp socket vanished and re-election didn't settle | Retry the call (re-election is lazy and self-heals). If it persists, check the whatsup log. |
 | `CONTACT_NOT_ALLOWLISTED` | Target phone not in `WHATSUP_ALLOWLIST` | Tell user; ask them to add the number out-of-band. |
 | `GROUP_NOT_ALLOWLISTED` | Target group not in `WHATSUP_ALLOWLIST_GROUPS` | Same. |
 | `RATE_LIMITED` | Per-contact (30/min) or total (100/min) cap hit | Wait. Don't retry-loop. |

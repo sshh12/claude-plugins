@@ -4,26 +4,16 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { getConfig, getSecurityWarnings } from "../shared/config.js";
-import {
-  createLogger,
-  setGlobalLogger,
-  setAuditLog,
-  audit,
-} from "../proxy/logger.js";
-import { WhatsAppManager } from "../proxy/whatsapp.js";
-import { MessageStore } from "../proxy/message-store.js";
-import { RateLimiter } from "../proxy/rate-limiter.js";
-import {
-  appendMessage as appendHistoryMessage,
-  loadRecentMessages,
-  pruneOld,
-} from "../proxy/history-store.js";
-import { TOOL_DEFS, callTool, type ToolCtx } from "./tools.js";
-import { pushIncoming, pushSystem } from "./notifications.js";
-import { ConnectorLock, STANDBY_POLL_MS } from "../proxy/connector-lock.js";
-import type { ConnectorRole } from "../shared/types.js";
+import { getConfig } from "../shared/config.js";
+import { createLogger, setGlobalLogger, audit } from "../proxy/logger.js";
+import { TOOL_DEFS } from "./tools.js";
+import { startBroker } from "../daemon/broker.js";
 
+/**
+ * Every Claude Code session runs this same MCP server. Internally one process
+ * owns the single WhatsApp connection (it won an atomic Unix-socket listen);
+ * the rest are thin proxies of it. The broker hides which role we play.
+ */
 const SERVER_INSTRUCTIONS = [
   "Inbound WhatsApp messages arrive as `notifications/claude/channel` events with a `meta` block carrying `chat_id`, `message_id`, `user`, `user_id`, `ts`, and `chat_type`. Reply through the `reply` tool — your transcript output never reaches the sender.",
   "",
@@ -31,9 +21,11 @@ const SERVER_INSTRUCTIONS = [
   "",
   "Sending is restricted to allowlisted contacts and groups (`WHATSUP_ALLOWLIST`, `WHATSUP_ALLOWLIST_GROUPS`). Calls to non-allowlisted targets return a CONTACT_NOT_ALLOWLISTED error. WhatsApp may ban accounts for excessive messaging, so the server also rate-limits per contact and overall.",
   "",
+  "One background-resident session owns the single WhatsApp connection; every other session proxies to it transparently, so multiple agents can run concurrently without conflict.",
+  "",
   "On session start, call the `status` tool once to verify the connection and surface any pending QR pairing. If the device is not yet paired, status returns a qrCodeFile path; tell the user to scan it (WhatsApp → Settings → Linked Devices → Link a Device).",
   "",
-  "After status, call `unreplied` to catch up on messages that arrived between sessions.",
+  "If this agent is the one handling WhatsApp, call `subscribe` after `status` — live inbound messages are delivered only to subscribed sessions. Then call `unreplied` to catch up on messages that arrived between sessions.",
   "",
   "When inbound meta has `attachment_file_id`, call `download_attachment` with that id to fetch the media to disk, then Read the returned path.",
 ].join("\n");
@@ -42,236 +34,53 @@ async function main(): Promise<void> {
   const config = getConfig();
   const logger = createLogger(config.logFile);
   setGlobalLogger(logger);
-  if (config.auditLog) setAuditLog(config.auditLog);
-
-  for (const w of getSecurityWarnings()) {
-    logger.warn(`Config warning: ${w.field} - ${w.message}`);
-    audit("config_override_blocked", { field: w.field, message: w.message });
-  }
-
-  logger.info("whatsup MCP starting", {
-    readMode: config.readMode,
-    allowlist: config.allowlist.length,
-    allowlistGroups: config.allowlistGroups.length,
-    rateLimitPerContact: config.rateLimitPerContact,
-    rateLimitTotal: config.rateLimitTotal,
-  });
   audit("mcp_start", { pid: process.pid });
 
-  const messageStore = new MessageStore(config.messageBufferSize);
-
-  // Hydrate the in-memory buffer from the persistent history JSONL so that
-  // read_chat / search / unreplied see prior-session messages immediately.
-  // Prune first so we don't load expired entries we're about to drop anyway.
-  try {
-    const pruneResult = pruneOld(config.historyFile, config.historyRetentionDays);
-    if (pruneResult.dropped > 0) {
-      logger.info("Pruned stale history entries", pruneResult);
-    }
-    const recent = loadRecentMessages(config.historyFile, config.historyLoadLimit);
-    for (const m of recent) messageStore.add(m);
-    if (recent.length > 0) {
-      logger.info("Hydrated message buffer from history", {
-        loaded: recent.length,
-        file: config.historyFile,
-      });
-      audit("history_hydrated", { loaded: recent.length });
-    }
-  } catch (err: any) {
-    logger.warn("History hydration failed (continuing without it)", {
-      error: err?.message ?? String(err),
-    });
-  }
-
-  const rateLimiter = new RateLimiter(config);
-  const wa = new WhatsAppManager(config, messageStore);
-
-  // Connector lease: only the lock holder opens a WhatsApp socket. Other
-  // processes (multi-agent teams spawn one MCP server each) run read-only
-  // standby and auto-promote if the holder exits/dies. Prevents the
-  // multi-socket 440 (connectionReplaced) crash loop.
-  const lock = new ConnectorLock(config.connectorLockFile, logger);
-  let role: ConnectorRole = lock.tryAcquire() ? "connector" : "standby";
-  wa.setLockPredicate(() => role === "connector");
-
   const mcp = new Server(
-    { name: "whatsup", version: "0.3.0" },
+    { name: "whatsup", version: "0.4.0" },
     {
-      capabilities: {
-        tools: {},
-        experimental: {
-          "claude/channel": {},
-        },
-      },
+      capabilities: { tools: {}, experimental: { "claude/channel": {} } },
       instructions: SERVER_INSTRUCTIONS,
     }
   );
 
-  const ctx: ToolCtx = {
-    wa,
-    config,
-    messageStore,
-    rateLimiter,
-    role: () => role,
-    lockHolderPid: () => lock.readHolderPid(),
-  };
+  const broker = await startBroker({ mcp, logger });
 
-  // ---- Tool handlers ----
-  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_DEFS,
-  }));
-
+  mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFS }));
   mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const name = req.params.name;
     const args = (req.params.arguments ?? {}) as Record<string, any>;
-    const result = await callTool(ctx, name, args);
-    const text = JSON.stringify(result, null, 2);
+    const result = await broker.handleToolCall(name, args);
     return {
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       isError: !result.ok,
     };
   });
 
-  // ---- Transport ----
   await mcp.connect(new StdioServerTransport());
   logger.info("MCP stdio transport connected");
 
-  // ---- WhatsApp connection ----
-  // Fire-and-forget connect: events surface asynchronously.
-  // Setup-time errors come back through channel notifications.
-  const startConnection = () =>
-    wa.connect({
-      onQr: (_qr) => {
-        logger.info("QR code generated", { path: config.qrCodeFile });
-        pushSystem(
-          mcp,
-          [
-            `WhatsApp pairing required. A QR code has been written to:`,
-            `  ${config.qrCodeFile}`,
-            ``,
-            `Scan it: WhatsApp → Settings → Linked Devices → Link a Device.`,
-            `On macOS: \`open ${config.qrCodeFile}\``,
-          ].join("\n")
-        );
-      },
-      onMessage: (msg) => {
-        // Persist every live message — both inbound and our own echoes from
-        // Baileys. pushIncoming will filter echoes and non-allowlisted senders
-        // from the Claude-facing channel, but the history file keeps both so
-        // unreplied can compute "messages since last outbound".
-        appendHistoryMessage(config.historyFile, msg);
-        pushIncoming(mcp, msg, config);
-      },
-    });
-
-  let standbyTimer: ReturnType<typeof setInterval> | null = null;
-
-  const startStandbyPoll = () => {
-    if (standbyTimer) return;
-    standbyTimer = setInterval(() => {
-      if (role !== "standby") return;
-      if (lock.tryAcquire()) {
-        role = "connector";
-        if (standbyTimer) {
-          clearInterval(standbyTimer);
-          standbyTimer = null;
-        }
-        lock.startHeartbeat(onLost);
-        logger.info("Promoted standby → connector");
-        pushSystem(mcp, "whatsup promoted to connector — opening WhatsApp socket.");
-        startConnection().catch((err) =>
-          logger.error("WhatsApp connect after promotion failed", {
-            error: err instanceof Error ? err.message : String(err),
-          })
-        );
-      }
-    }, STANDBY_POLL_MS);
-    standbyTimer.unref();
-  };
-
-  // Called when the heartbeat detects a foreign pid owns the lock (we stalled
-  // and a standby promoted): drop our socket and demote so there is never
-  // more than one live socket.
-  const onLost = () => {
-    if (role !== "connector") return;
-    logger.warn("Lost connector lease — demoting to standby");
-    role = "standby";
-    wa.disconnect().catch(() => {});
-    pushSystem(
-      mcp,
-      "whatsup demoted to standby — another instance took the connector lease."
-    );
-    startStandbyPoll();
-  };
-
-  if (role === "connector") {
-    lock.startHeartbeat(onLost);
-    startConnection().catch((err) => {
-      logger.error("Initial WhatsApp connect failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  } else {
-    const holderPid = lock.readHolderPid();
-    logger.info("Starting in standby — another instance owns the connector lease", {
-      holderPid,
-    });
-    pushSystem(
-      mcp,
-      `whatsup standby — another instance${holderPid ? ` (pid ${holderPid})` : ""} owns the WhatsApp socket. ` +
-        `This agent has read-only access (read_chat/search/unreplied work off buffered history) ` +
-        `and will take over if that instance exits.`
-    );
-    startStandbyPoll();
-  }
-
-  // Emit a one-shot system notification once authenticated.
-  let announcedReady = false;
-  const readyTimer = setInterval(() => {
-    if (announcedReady) return;
-    if (role !== "connector") return;
-    if (wa.isReady()) {
-      announcedReady = true;
-      pushSystem(
-        mcp,
-        `WhatsApp connected as ${wa.getStatus().phone ?? "unknown"}. Ready to receive messages.`
-      );
-    }
-  }, 2000);
-  readyTimer.unref();
-
-  // ---- Graceful shutdown ----
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info(`Shutdown requested (${signal})`);
     audit("mcp_stop", { signal });
-    clearInterval(readyTimer);
-    if (standbyTimer) clearInterval(standbyTimer);
-    // Release the connector lease so a standby can promote immediately
-    // instead of waiting out the stale-heartbeat window.
     try {
-      lock.release();
+      await broker.shutdown();
     } catch {
-      // best effort
-    }
-    try {
-      await wa.disconnect();
-    } catch {
-      // best effort
+      /* best effort */
     }
     try {
       await mcp.close();
     } catch {
-      // best effort
+      /* best effort */
     }
     process.exit(0);
   };
 
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
-  // When the parent (Claude Code) closes stdio, exit too.
   process.stdin.on("end", () => void shutdown("stdin-end"));
   process.stdin.on("close", () => void shutdown("stdin-close"));
 }

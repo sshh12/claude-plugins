@@ -12,17 +12,14 @@ import type {
 // ---- Defaults ----
 
 const DEFAULTS: WhatsUpConfig = {
-  proxyPort: 9226,
   authDir: join(homedir(), ".config", "whatsup", "auth"),
   allowlist: [],
   allowlistGroups: [],
-  idleTimeout: 3600,
   logFile: "/tmp/whatsup-proxy.log",
   auditLog: join(homedir(), ".config", "whatsup", "audit.jsonl"),
   disabledCommands: [],
   messageBufferSize: 500,
   mediaDownloadDir: "/tmp/whatsup-media",
-  pollTimeout: 30,
   autoReconnect: true,
   qrCodeFile: "/tmp/whatsup-qr.png",
   readMode: "allowlist",
@@ -32,23 +29,20 @@ const DEFAULTS: WhatsUpConfig = {
   historyFile: join(homedir(), ".config", "whatsup", "messages.jsonl"),
   historyRetentionDays: 90,
   historyLoadLimit: 5000,
-  connectorLockFile: join(homedir(), ".config", "whatsup", "connector.lock"),
+  daemonSocketFile: join(homedir(), ".config", "whatsup", "daemon.sock"),
 };
 
 // ---- Config File Shape ----
 
 interface ConfigFile {
-  proxyPort?: number;
   authDir?: string;
   allowlist?: string[];
   allowlistGroups?: string[];
-  idleTimeout?: number;
   logFile?: string;
   auditLog?: string;
   disabledCommands?: string[];
   messageBufferSize?: number;
   mediaDownloadDir?: string;
-  pollTimeout?: number;
   autoReconnect?: boolean;
   qrCodeFile?: string;
   readMode?: "allowlist" | "all";
@@ -58,7 +52,7 @@ interface ConfigFile {
   historyFile?: string;
   historyRetentionDays?: number;
   historyLoadLimit?: number;
-  connectorLockFile?: string;
+  daemonSocketFile?: string;
 }
 
 /**
@@ -71,7 +65,7 @@ const LOCKED_FROM_REPO: ReadonlySet<keyof ConfigFile> = new Set([
   "auditLog",
   "qrCodeFile",
   "historyFile",
-  "connectorLockFile",
+  "daemonSocketFile",
 ]);
 
 /** Security warnings accumulated during the last resolveConfig() call. */
@@ -380,12 +374,6 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
   const env = process.env;
 
   return {
-    proxyPort: resolveNumber(
-      env.WHATSUP_PORT,
-      repoConfig?.proxyPort,
-      userConfig?.proxyPort,
-      DEFAULTS.proxyPort
-    ),
     authDir: resolveLockedString(
       "authDir",
       env.WHATSUP_AUTH_DIR,
@@ -406,12 +394,6 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
       repoConfig?.allowlistGroups,
       userConfig?.allowlistGroups,
       DEFAULTS.allowlistGroups
-    ),
-    idleTimeout: resolveNumber(
-      env.WHATSUP_IDLE_TIMEOUT,
-      repoConfig?.idleTimeout,
-      userConfig?.idleTimeout,
-      DEFAULTS.idleTimeout
     ),
     logFile: resolveLockedString(
       "logFile",
@@ -444,12 +426,6 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
       repoConfig?.mediaDownloadDir,
       userConfig?.mediaDownloadDir,
       DEFAULTS.mediaDownloadDir
-    ),
-    pollTimeout: resolveNumber(
-      env.WHATSUP_POLL_TIMEOUT,
-      repoConfig?.pollTimeout,
-      userConfig?.pollTimeout,
-      DEFAULTS.pollTimeout
     ),
     autoReconnect: resolveBoolean(
       env.WHATSUP_AUTO_RECONNECT,
@@ -510,12 +486,12 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
       userConfig?.historyLoadLimit,
       DEFAULTS.historyLoadLimit
     ),
-    connectorLockFile: resolveLockedString(
-      "connectorLockFile",
-      env.WHATSUP_CONNECTOR_LOCK_FILE,
-      repoConfig?.connectorLockFile,
-      userConfig?.connectorLockFile,
-      DEFAULTS.connectorLockFile
+    daemonSocketFile: resolveLockedString(
+      "daemonSocketFile",
+      env.WHATSUP_DAEMON_SOCKET_FILE,
+      repoConfig?.daemonSocketFile,
+      userConfig?.daemonSocketFile,
+      DEFAULTS.daemonSocketFile
     ),
   };
 }
@@ -538,4 +514,57 @@ export function getConfig(cwd?: string): WhatsUpConfig {
       (ent as ResolvedConfigEntry<unknown>).value,
     ])
   ) as unknown as WhatsUpConfig;
+}
+
+// ---- Per-request effective config (owner ⊕ proxy) ----
+
+/**
+ * The gating-relevant subset a proxy sends to the owner. The owner merges it
+ * with its own base config so a proxy can only ever NARROW permissions
+ * (a malicious repo `.claude/whatsup.json` can never widen the owner's).
+ */
+export interface EffectiveConfigOverride {
+  allowlist?: string[];
+  allowlistGroups?: string[];
+  readMode?: "allowlist" | "all";
+  disabledCommands?: string[];
+  rateLimitPerContact?: number;
+  rateLimitTotal?: number;
+  maxMediaSize?: number;
+}
+
+/**
+ * Stricter 2-way merge of the owner's base config with a proxy override.
+ * Mirrors the security semantics of the 4-source resolvers in this file:
+ * allowlists = intersection, disabledCommands = union, readMode = stricter
+ * ("allowlist" wins), numeric limits = min. Unspecified override fields keep
+ * the base value. The shared rate-limiter/message-store stay owner-side —
+ * only these gating fields are per-request.
+ */
+export function mergeEffectiveConfig(
+  base: WhatsUpConfig,
+  o: EffectiveConfigOverride | undefined
+): WhatsUpConfig {
+  if (!o) return base;
+  const intersect = (b: string[], v?: string[]): string[] =>
+    v === undefined ? b : b.filter((x) => v.includes(x));
+  const union = (b: string[], v?: string[]): string[] =>
+    v === undefined ? b : [...new Set([...b, ...v])];
+  const stricterRead = (
+    b: "allowlist" | "all",
+    v?: "allowlist" | "all"
+  ): "allowlist" | "all" =>
+    v === "allowlist" || b === "allowlist" ? "allowlist" : "all";
+  const min = (b: number, v?: number): number =>
+    v === undefined ? b : Math.min(b, v);
+  return {
+    ...base,
+    allowlist: intersect(base.allowlist, o.allowlist),
+    allowlistGroups: intersect(base.allowlistGroups, o.allowlistGroups),
+    readMode: stricterRead(base.readMode, o.readMode),
+    disabledCommands: union(base.disabledCommands, o.disabledCommands),
+    rateLimitPerContact: min(base.rateLimitPerContact, o.rateLimitPerContact),
+    rateLimitTotal: min(base.rateLimitTotal, o.rateLimitTotal),
+    maxMediaSize: min(base.maxMediaSize, o.maxMediaSize),
+  };
 }

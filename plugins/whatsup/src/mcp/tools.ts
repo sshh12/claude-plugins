@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { downloadMediaMessage } from "baileys";
 import type { WAMessage } from "baileys";
-import type { ApiResponse, WhatsUpConfig, ConnectorRole } from "../shared/types.js";
+import type { ApiResponse, WhatsUpConfig } from "../shared/types.js";
 import { ErrorCode } from "../shared/types.js";
 import type { WhatsAppManager } from "../proxy/whatsapp.js";
 import type { MessageStore } from "../proxy/message-store.js";
@@ -37,10 +37,9 @@ export interface ToolCtx {
   config: WhatsUpConfig;
   messageStore: MessageStore;
   rateLimiter: RateLimiter;
-  // Functions, not values: role flips on standby→connector promotion after
-  // ctx is constructed, so callers must read it live.
-  role: () => ConnectorRole;
-  lockHolderPid: () => number | null;
+  // The broker daemon builds one ToolCtx per request; this surfaces the
+  // daemon's own pid/uptime for the `status` tool.
+  daemonInfo: () => { pid: number; uptimeSec: number };
 }
 
 // ---- Definitions surfaced to the MCP client ----
@@ -116,7 +115,7 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "status",
     description:
-      "Get WhatsApp connection state. Returns connected, authenticated, phone, pushName, the QR file path if pairing is pending, reconnect diagnostics (lastDisconnectReason, reconnectAttempts, reconnectScheduled, reconnectGaveUp), and the connector-lease fields: role ('connector' owns the socket; 'standby' is read-only, another instance owns it — lockHolderPid names it), and replacedByOtherInstance (true when an external WhatsApp Web/phone session took the socket; call reconnect to retake it).",
+      "Get WhatsApp connection state. Returns connected, authenticated, phone, pushName, the QR file path if pairing is pending, reconnect diagnostics (lastDisconnectReason, reconnectAttempts, reconnectScheduled, reconnectGaveUp), the shared broker daemon's pid/uptime (daemonPid, daemonUptimeSec), and replacedByOtherInstance (true when an external WhatsApp Web/phone session took the socket; call reconnect to retake it).",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -185,6 +184,18 @@ export const TOOL_DEFS: ToolDef[] = [
       },
     },
   },
+  {
+    name: "subscribe",
+    description:
+      "Start receiving inbound WhatsApp messages on this session's channel. The shared broker daemon delivers live messages only to sessions that have subscribed, so call this once (after `status`) if this agent is the one handling WhatsApp. Idempotent.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "unsubscribe",
+    description:
+      "Stop receiving inbound WhatsApp messages on this session's channel. Other sessions are unaffected. You can still send and use read tools.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 // ---- Wrapper plumbing ----
@@ -235,22 +246,6 @@ function checkConnected(wa: WhatsAppManager): ApiResponse | null {
   };
 }
 
-/**
- * Standby instances do not own the WhatsApp socket. Build a clear, non-throwing
- * response explaining that, naming the connector pid when known.
- */
-function standbyResponse(ctx: ToolCtx, action: string): ApiResponse {
-  const pid = ctx.lockHolderPid();
-  return {
-    ok: false,
-    error: `This whatsup instance is on standby — another instance owns the WhatsApp socket, so it cannot ${action}.`,
-    code: ErrorCode.STANDBY,
-    hint: pid
-      ? `The connector is pid ${pid}. This agent auto-promotes (and gains send) if that instance exits or dies.`
-      : `This agent auto-promotes (and gains send) if the connector exits or dies.`,
-  };
-}
-
 async function runWrite(
   ctx: ToolCtx,
   commandName: string,
@@ -259,10 +254,6 @@ async function runWrite(
 ): Promise<ApiResponse> {
   const disabled = checkDisabled(commandName, ctx.config);
   if (disabled) return disabled;
-
-  // A standby process must never open/use the socket. Reject before the
-  // connection check so the error names the real cause, not "not connected".
-  if (ctx.role() === "standby") return standbyResponse(ctx, "send");
 
   const conn = checkConnected(ctx.wa);
   if (conn) return conn;
@@ -294,29 +285,10 @@ async function runWrite(
 async function runRead(
   ctx: ToolCtx,
   commandName: string,
-  fn: () => Promise<ApiResponse>,
-  // Store-backed reads (read_chat/search/unreplied) serve the history buffer,
-  // which server.ts hydrates from the shared JSONL at startup even for
-  // standby. Socket-cache reads (list_chats/contacts) cannot.
-  standbyOk = false
+  fn: () => Promise<ApiResponse>
 ): Promise<ApiResponse> {
   const disabled = checkDisabled(commandName, ctx.config);
   if (disabled) return disabled;
-
-  if (ctx.role() === "standby") {
-    if (!standbyOk) return standbyResponse(ctx, "list live chats/contacts");
-    // Serve the hydrated buffer; the socket is owned by the connector.
-    const start = Date.now();
-    try {
-      const result = await fn();
-      audit("command", { command: commandName, ok: result.ok, duration: Date.now() - start, standby: true });
-      return result;
-    } catch (err: any) {
-      const message = err?.message ?? String(err);
-      audit("command_error", { command: commandName, error: message, standby: true });
-      return { ok: false, error: message, code: ErrorCode.SOCKET_ERROR };
-    }
-  }
 
   const conn = checkConnected(ctx.wa);
   if (conn) return conn;
@@ -367,6 +339,11 @@ export async function callTool(
       return callSearch(ctx, args);
     case "contacts":
       return callContacts(ctx, args);
+    case "subscribe":
+    case "unsubscribe":
+      // Connection-scoped: the broker daemon intercepts these at the IPC
+      // layer and they never reach callTool. This is only a safety net.
+      return { ok: true, note: `${name} is handled by the broker daemon` };
     default:
       return { ok: false, error: `Unknown tool: ${name}`, code: ErrorCode.INVALID_ARGUMENT };
   }
@@ -576,16 +553,9 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
   const creds = hasCredentials(ctx.config.authDir);
   const ready = ctx.wa.isReady();
 
-  const role = ctx.role();
-
   // Pick a one-line diagnostic for Claude to relay to the user.
   let diagnosis: string;
-  if (role === "standby") {
-    const pid = ctx.lockHolderPid();
-    diagnosis = pid
-      ? `standby — another whatsup instance (pid ${pid}) owns the WhatsApp socket; this instance takes over if it exits`
-      : "standby — another whatsup instance owns the WhatsApp socket; this instance takes over if it exits";
-  } else if (status.replacedByOtherInstance) {
+  if (status.replacedByOtherInstance) {
     diagnosis =
       "another session/instance replaced this connection — not auto-reconnecting; call the reconnect tool to retake it";
   } else if (ready) {
@@ -604,10 +574,11 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
     diagnosis = "initial connect in progress";
   }
 
+  const daemon = ctx.daemonInfo();
+
   return {
     ok: true,
     diagnosis,
-    role,
     ready,
     connected: status.connected,
     authenticated: status.authenticated,
@@ -623,7 +594,8 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
     reconnectScheduled: status.reconnectScheduled ?? false,
     reconnectGaveUp: status.reconnectGaveUp ?? false,
     replacedByOtherInstance: status.replacedByOtherInstance ?? false,
-    lockHolderPid: ctx.lockHolderPid(),
+    daemonPid: daemon.pid,
+    daemonUptimeSec: daemon.uptimeSec,
     allowlist: ctx.config.allowlist,
     allowlistGroups: ctx.config.allowlistGroups,
     readMode: ctx.config.readMode,
@@ -631,10 +603,6 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
 }
 
 async function callReconnect(ctx: ToolCtx): Promise<ApiResponse> {
-  // A standby must not open a socket — the connector owns it. Reconnecting
-  // here would re-introduce the multi-socket conflict this lease prevents.
-  if (ctx.role() === "standby") return standbyResponse(ctx, "reconnect");
-
   if (!hasCredentials(ctx.config.authDir)) {
     return {
       ok: false,
@@ -686,7 +654,7 @@ async function callUnreplied(ctx: ToolCtx, args: any): Promise<ApiResponse> {
       .map((m) => filterMessageForOutput(m, ctx.config));
 
     return { ok: true, messages: pending };
-  }, true);
+  });
 }
 
 async function callListChats(ctx: ToolCtx, args: any): Promise<ApiResponse> {
@@ -703,17 +671,13 @@ async function callReadChat(ctx: ToolCtx, args: any): Promise<ApiResponse> {
   if (!chatId) {
     return { ok: false, error: "chat_id is required", code: ErrorCode.INVALID_ARGUMENT };
   }
-  return runRead(
-    ctx,
-    "read-chat",
-    () =>
-      handleReadChat(
-        ctx.wa,
-        ctx.config,
-        { chatId, limit: args.limit, before: args.before },
-        ctx.messageStore
-      ),
-    true
+  return runRead(ctx, "read-chat", () =>
+    handleReadChat(
+      ctx.wa,
+      ctx.config,
+      { chatId, limit: args.limit, before: args.before },
+      ctx.messageStore
+    )
   );
 }
 
@@ -722,17 +686,13 @@ async function callSearch(ctx: ToolCtx, args: any): Promise<ApiResponse> {
   if (!query) {
     return { ok: false, error: "query is required", code: ErrorCode.INVALID_ARGUMENT };
   }
-  return runRead(
-    ctx,
-    "search",
-    () =>
-      handleSearch(
-        ctx.wa,
-        ctx.config,
-        { query, chat: args.chat, from: args.from, limit: args.limit },
-        ctx.messageStore
-      ),
-    true
+  return runRead(ctx, "search", () =>
+    handleSearch(
+      ctx.wa,
+      ctx.config,
+      { query, chat: args.chat, from: args.from, limit: args.limit },
+      ctx.messageStore
+    )
   );
 }
 

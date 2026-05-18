@@ -14,8 +14,8 @@ export async function handleSearch(
   },
   messageStore: MessageStore
 ): Promise<ApiResponse> {
-  // No isReady() guard: this reads only the message buffer (see read-chat.ts).
-  // runRead gates the connected path; standby serves the hydrated buffer.
+  // No isReady() guard: reads only the in-memory buffer (see read-chat.ts).
+  // runRead gates the connected path; this handler just serves the buffer.
 
   if (!params.query) {
     return { ok: false, error: "query is required", code: ErrorCode.INVALID_ARGUMENT };

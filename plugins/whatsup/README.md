@@ -28,13 +28,20 @@ claude --plugin-dir ./plugins/whatsup
 ## Architecture
 
 ```
-Claude Code session ──stdio MCP──> dist/mcp-server.js ──Baileys WS──> WhatsApp
-       ▲                                  │
-       │ notifications/claude/channel     │  every inbound live message
-       └──────────────────────────────────┘
+Claude session A ─stdio─> mcp-server.js ┐
+Claude session B ─stdio─> mcp-server.js ┤  one wins an atomic
+Claude session C ─stdio─> mcp-server.js ┘  unix-socket listen()
+                                  │
+                     ┌────────────┴─────────────┐
+                     │ OWNER process: the single │─Baileys WS─> WhatsApp
+                     │ WhatsApp socket + sole     │
+                     │ history writer + IPC server│
+                     └────────────▲─────────────┘
+                       unix socket │  others are PROXIES — forward tool
+                                   │  calls, receive subscribed pushes
 ```
 
-Single process. Lifetime tied to the Claude Code session — no daemon to start, no HTTP, no idle timer.
+Every Claude Code session runs the same `dist/mcp-server.js`. They race an atomic Unix-domain-socket `listen()`: exactly one becomes the **owner** (holds the one WhatsApp connection, is the sole history writer, serves the rest over IPC); the others are thin **proxies**. No separate daemon to start, no HTTP, no idle timer — the owner role lives in-process. If the owner exits, a surviving session re-elects automatically on its next call. Live inbound messages are delivered only to sessions that called `subscribe` (so teammate agents that never opt in aren't spammed). A proxy's repo config can only ever *narrow* the owner's allowlist/limits, never widen them.
 
 Inbound + outbound messages are persisted as JSONL at `~/.config/whatsup/messages.jsonl` (0600 perms). On each startup the server prunes entries older than `WHATSUP_HISTORY_RETENTION_DAYS` (default 90) and hydrates the last `WHATSUP_HISTORY_LOAD_LIMIT` (default 5000) entries into the in-memory buffer, so `read_chat` / `search` / `unreplied` survive restarts. Raw media protos are NOT serialized — `download_attachment` only works for media that arrived in the current session.
 
@@ -70,8 +77,9 @@ Phone numbers are E.164 (country code, `+` prefix). Restart Claude Code so the M
 | `react` | Add or clear an emoji reaction. |
 | `edit_message` | Edit a message this account previously sent. |
 | `download_attachment` | Fetch an inbound media attachment to disk. |
-| `status` | Connection state, phone, pushName, QR path if pairing, plus reconnect diagnostics (`diagnosis`, `reconnectAttempts`, `reconnectScheduled`, `reconnectGaveUp`, `lastDisconnectReason`). |
-| `reconnect` | Force a fresh WhatsApp socket — use after a transient drop or when reconnect gave up. |
+| `status` | Connection state, phone, pushName, QR path if pairing, reconnect diagnostics (`diagnosis`, `reconnectAttempts`, `reconnectScheduled`, `reconnectGaveUp`, `lastDisconnectReason`, `replacedByOtherInstance`), and this session's `role` (`owner`/`proxy`) + `ownerPid`. |
+| `reconnect` | Force a fresh WhatsApp socket — use after a transient drop, when reconnect gave up, or when `replacedByOtherInstance` is set. |
+| `subscribe` / `unsubscribe` | Opt this session in/out of live inbound message delivery. Call `subscribe` once after `status` if this agent handles WhatsApp; survives owner handoff. |
 | `unreplied` | Inbound messages received this session not yet replied to. |
 | `list_chats` | Recent chats with timestamps + unread counts. |
 | `read_chat` | Recent buffered messages for a chat. |
