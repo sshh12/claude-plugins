@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, unlinkSync, chmodSync, statSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync, chmodSync, statSync } from "fs";
 import { join } from "path";
 import { useMultiFileAuthState } from "baileys";
 import QRCode from "qrcode";
@@ -100,6 +100,51 @@ export function hasCredentials(authDir: string): boolean {
     return existsSync(join(authDir, "creds.json"));
   } catch {
     return false;
+  }
+}
+
+/**
+ * Back up the auth directory by renaming it to `${authDir}.bak.${unixMillis}`.
+ * Used before a destructive wipe so a spurious 401 (loggedOut) does not
+ * force a full QR re-pair -- the operator can recover by renaming the
+ * backup back into place.
+ *
+ * Returns the backup path on success, or null if authDir is missing/empty.
+ */
+export async function backupCredentials(authDir: string): Promise<string | null> {
+  const logger = getGlobalLogger();
+
+  try {
+    if (!existsSync(authDir)) {
+      logger.info("No auth directory to back up", { authDir });
+      return null;
+    }
+
+    let files: string[] = [];
+    try {
+      files = readdirSync(authDir);
+    } catch {
+      files = [];
+    }
+    if (files.length === 0) {
+      logger.info("Auth directory empty, skipping backup", { authDir });
+      return null;
+    }
+
+    const backupPath = `${authDir}.bak.${Date.now()}`;
+    renameSync(authDir, backupPath);
+
+    logger.warn("Auth credentials backed up", {
+      authDir,
+      backupPath,
+      filesPreserved: files.length,
+    });
+    audit("auth_credentials_backed_up", { authDir, backupPath, filesPreserved: files.length });
+
+    return backupPath;
+  } catch (err: any) {
+    logger.error("Failed to back up auth credentials", { authDir, error: err?.message });
+    throw err;
   }
 }
 

@@ -20,7 +20,7 @@ import type {
   StoredMessage,
 } from "../shared/types.js";
 import { MessageStore } from "./message-store.js";
-import { initAuthState, saveQrCode, cleanupQrCode, clearCredentials, type AuthState } from "./auth.js";
+import { initAuthState, saveQrCode, cleanupQrCode, backupCredentials, type AuthState } from "./auth.js";
 import { getGlobalLogger, audit } from "./logger.js";
 
 // ---- WhatsApp Connection Manager ----
@@ -432,18 +432,57 @@ export class WhatsAppManager {
         audit("connection_close", { statusCode, error: errorMessage });
 
         if (statusCode === DisconnectReason.loggedOut) {
-          // User logged out -- clear credentials and reset
-          logger.info("Logged out from WhatsApp, clearing credentials");
-          audit("logged_out", {});
+          // Baileys/WhatsApp maps any 401 to DisconnectReason.loggedOut, but
+          // the wire-level reason string distinguishes two semantically
+          // different events:
+          //   (a) genuine user-initiated unlink from the phone -- terminal.
+          //   (b) server-side session conflict / sibling-device displacement
+          //       -- often spurious and recoverable via `reconnect`.
+          // Case (b) shows up as "Stream Errored (conflict)" or similar
+          // "replaced" wording. Route those through the connectionReplaced
+          // path (creds preserved) instead of the destructive backup path.
+          const conflictLike = /conflict|replaced/i.test(errorMessage);
 
-          this.connectionStatus.authenticated = false;
-          this.connectionStatus.phone = undefined;
-          this.connectionStatus.pushName = undefined;
+          if (conflictLike) {
+            this.connectionStatus.replacedByOtherInstance = true;
+            this.connectionStatus.reconnectScheduled = false;
+            logger.warn(
+              "401 with conflict-like reason — treating as connectionReplaced (creds preserved). Call reconnect to retake socket.",
+              { statusCode, error: errorMessage }
+            );
+            audit("connection_replaced_external", {
+              statusCode,
+              error: errorMessage,
+              reclassifiedFrom: "loggedOut",
+            });
+          } else {
+            // Unambiguous loggedOut (no "conflict"/"replaced" signature) --
+            // most plausibly a genuine user unlink. Still BACK UP rather
+            // than delete: `backupCredentials` atomically renames
+            // authDir -> authDir.bak.<ts>, which both preserves the files
+            // and clears the live auth dir in one step (so no subsequent
+            // clearCredentials call is needed). Defense in depth in case
+            // even this path turns out to be spurious.
+            logger.warn("Logged out from WhatsApp (401), backing up credentials");
+            audit("logged_out", {});
 
-          try {
-            await clearCredentials(this.config.authDir);
-          } catch (err: any) {
-            logger.error("Failed to clear credentials after logout", { error: err?.message });
+            this.connectionStatus.authenticated = false;
+            this.connectionStatus.phone = undefined;
+            this.connectionStatus.pushName = undefined;
+
+            try {
+              const backupPath = await backupCredentials(this.config.authDir);
+              if (backupPath) {
+                logger.warn(
+                  "Auth credentials preserved -- restore by renaming back to authDir if 401 was spurious",
+                  { backupPath }
+                );
+                this.connectionStatus.lastDisconnectReason =
+                  `${errorMessage} -- auth backed up to ${backupPath}`;
+              }
+            } catch (err: any) {
+              logger.error("Failed to back up credentials after logout", { error: err?.message });
+            }
           }
         } else if (statusCode === DisconnectReason.connectionReplaced) {
           // 440 connectionReplaced: this process is the sole owner of the
