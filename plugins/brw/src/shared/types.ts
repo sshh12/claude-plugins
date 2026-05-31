@@ -1,8 +1,7 @@
 // ---- Configuration ----
 
 export interface BrwConfig {
-  proxyPort: number;
-  cdpPort: number;
+  socketPath: string;
   chromeDataDir: string;
   chromePath: string | null;
   headless: boolean;
@@ -19,7 +18,6 @@ export interface BrwConfig {
   cookieScope: string;
   autoScreenshot: boolean;
   logFile: string;
-  chromeLaunch: boolean;
 }
 
 export type ConfigSource = 'env' | 'repo' | 'user' | 'default';

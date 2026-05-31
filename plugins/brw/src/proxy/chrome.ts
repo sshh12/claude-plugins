@@ -1,8 +1,7 @@
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readlinkSync } from 'fs';
 import { join } from 'path';
-import { homedir, platform } from 'os';
-import { createConnection } from 'net';
+import { homedir, platform, userInfo } from 'os';
 import type { BrwConfig } from '../shared/types.js';
 
 const PID_DIR = join(homedir(), '.config', 'brw');
@@ -53,50 +52,6 @@ export function getChromeVersion(chromePath: string): string | null {
 }
 
 /**
- * Check if a TCP port is currently in use by attempting a connection.
- * Returns the PID of the process using it (via lsof) or true if in use but PID unknown.
- */
-export function checkPortInUse(port: number): Promise<{ inUse: boolean; pid?: number }> {
-  return new Promise((resolve) => {
-    const socket = createConnection({ port, host: '127.0.0.1' }, () => {
-      socket.destroy();
-      // Port is in use, try to find the PID
-      const pid = getPortOwnerPid(port);
-      resolve({ inUse: true, pid: pid ?? undefined });
-    });
-    socket.on('error', () => {
-      resolve({ inUse: false });
-    });
-    socket.setTimeout(1000, () => {
-      socket.destroy();
-      resolve({ inUse: false });
-    });
-  });
-}
-
-/**
- * Try to find the PID of the process listening on a given port using lsof (macOS/Linux).
- */
-function getPortOwnerPid(port: number): number | null {
-  try {
-    const cmd = platform() === 'win32'
-      ? `netstat -ano | findstr :${port} | findstr LISTENING`
-      : `lsof -i :${port} -t 2>/dev/null | head -1`;
-    const output = execSync(cmd, { timeout: 3000, encoding: 'utf-8' }).trim();
-    if (platform() === 'win32') {
-      // Last column is PID in netstat output
-      const parts = output.split(/\s+/);
-      const pid = parseInt(parts[parts.length - 1], 10);
-      return isNaN(pid) ? null : pid;
-    }
-    const pid = parseInt(output, 10);
-    return isNaN(pid) ? null : pid;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Check for a stale SingletonLock in the Chrome data directory.
  * Chrome creates this as a symlink with target "hostname-PID".
  * If the PID is dead, delete the stale lock. If alive, throw with PID info.
@@ -131,7 +86,7 @@ function checkSingletonLock(chromeDataDir: string): void {
 
 /**
  * Clean up an orphaned Chrome process from a previous proxy run.
- * If the CDP port is occupied and our proxy PID is dead but our Chrome PID is alive, kill Chrome.
+ * If our proxy PID is dead but our Chrome PID is alive, kill Chrome.
  */
 export async function cleanupOrphanedChrome(config: BrwConfig): Promise<void> {
   const pidData = readPidFile();
@@ -140,21 +95,18 @@ export async function cleanupOrphanedChrome(config: BrwConfig): Promise<void> {
   // If proxy is still alive, no orphan
   if (isProcessRunning(pidData.pid)) return;
 
-  // Proxy is dead — check if Chrome is still alive
+  // Proxy is dead — if Chrome is still alive, kill it
   if (isProcessRunning(pidData.chromePid)) {
-    const portCheck = await checkPortInUse(config.cdpPort);
-    if (portCheck.inUse) {
-      console.error(`[brw-proxy] Killing orphaned Chrome (PID ${pidData.chromePid}) from dead proxy (PID ${pidData.pid})`);
-      try {
-        process.kill(pidData.chromePid, 'SIGTERM');
-        // Give it a moment, then force kill
-        await new Promise((r) => setTimeout(r, 1000));
-        if (isProcessRunning(pidData.chromePid)) {
-          process.kill(pidData.chromePid, 'SIGKILL');
-        }
-      } catch {
-        // ignore — process may have already exited
+    console.error(`[brw-proxy] Killing orphaned Chrome (PID ${pidData.chromePid}) from dead proxy (PID ${pidData.pid})`);
+    try {
+      process.kill(pidData.chromePid, 'SIGTERM');
+      // Give it a moment, then force kill
+      await new Promise((r) => setTimeout(r, 1000));
+      if (isProcessRunning(pidData.chromePid)) {
+        process.kill(pidData.chromePid, 'SIGKILL');
       }
+    } catch {
+      // ignore — process may have already exited
     }
   }
 
@@ -164,20 +116,24 @@ export async function cleanupOrphanedChrome(config: BrwConfig): Promise<void> {
 
 export function findDebugBrowserProcesses(): Array<{ pid: number; port: number; binary: string }> {
   try {
-    const output = execSync('ps -eo pid,args', { encoding: 'utf-8', timeout: 5000 });
+    // Scope to the current user on POSIX; win32 best-effort fallback.
+    let cmd = 'ps -eo pid,args';
+    if (platform() !== 'win32') {
+      const uid = userInfo().uid;
+      cmd = `ps -u ${uid} -o pid,args`;
+    }
+    const output = execSync(cmd, { encoding: 'utf-8', timeout: 5000 });
     const results: Array<{ pid: number; port: number; binary: string }> = [];
     for (const line of output.split('\n')) {
-      if (!line.includes('--remote-debugging-port')) continue;
+      if (!line.includes('--remote-debugging-pipe')) continue;
       if (line.includes('--type=')) continue; // skip child processes (renderer, gpu, utility)
       const pidMatch = line.trim().match(/^(\d+)\s/);
       if (!pidMatch) continue;
       const pid = parseInt(pidMatch[1], 10);
       if (pid === process.pid) continue;
-      const portMatch = line.match(/--remote-debugging-port=(\d+)/);
-      const port = portMatch ? parseInt(portMatch[1], 10) : 0;
       const argsStart = line.trim().replace(/^\d+\s+/, '');
       const binary = argsStart.split(/\s/)[0].split('/').pop() || 'unknown';
-      results.push({ pid, port, binary });
+      results.push({ pid, port: 0, binary });
     }
     return results;
   } catch {
@@ -239,28 +195,13 @@ export async function launchChrome(config: BrwConfig): Promise<ChildProcess> {
   // Clean up orphaned Chrome from a previous proxy crash
   await cleanupOrphanedChrome(config);
 
-  // Check if CDP port is already in use
-  const portCheck = await checkPortInUse(config.cdpPort);
-  if (portCheck.inUse) {
-    // Check if it's a Chrome process we previously launched
-    if (isOurChrome(config.cdpPort)) {
-      // Our Chrome is already running, that's fine
-      console.error(`[brw-proxy] CDP port ${config.cdpPort} is in use by our previous Chrome instance`);
-    } else {
-      const pidInfo = portCheck.pid ? ` (PID ${portCheck.pid})` : '';
-      throw new Error(
-        `Port ${config.cdpPort} is in use by another process${pidInfo}. Use BRW_CDP_PORT to specify a different port.`
-      );
-    }
-  }
-
   mkdirSync(config.chromeDataDir, { recursive: true });
 
   // Check for stale SingletonLock
   checkSingletonLock(config.chromeDataDir);
 
   const args = [
-    `--remote-debugging-port=${config.cdpPort}`,
+    '--remote-debugging-pipe',
     `--user-data-dir=${config.chromeDataDir}`,
     '--no-first-run',
     '--no-default-browser-check',
@@ -274,20 +215,22 @@ export async function launchChrome(config: BrwConfig): Promise<ChildProcess> {
     args.push('--headless=new');
   }
 
+  // stdio[3] (Writable) carries CDP commands -> Chrome fd3,
+  // stdio[4] (Readable) carries CDP events <- Chrome fd4.
   const child = spawn(chromePath, args, {
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'],
     detached: false,
   });
 
   return child;
 }
 
-export function writePidFile(pid: number, port: number, chromePid?: number): void {
+export function writePidFile(pid: number, socketPath: string, chromePid?: number): void {
   mkdirSync(PID_DIR, { recursive: true });
-  writeFileSync(PID_FILE, JSON.stringify({ pid, port, chromePid, startedAt: Date.now() }));
+  writeFileSync(PID_FILE, JSON.stringify({ pid, socketPath, chromePid, startedAt: Date.now() }));
 }
 
-export function readPidFile(): { pid: number; port: number; chromePid?: number; startedAt: number } | null {
+export function readPidFile(): { pid: number; socketPath?: string; chromePid?: number; startedAt: number } | null {
   try {
     if (!existsSync(PID_FILE)) return null;
     const data = JSON.parse(readFileSync(PID_FILE, 'utf-8'));
@@ -312,15 +255,4 @@ export function isProcessRunning(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * Check if a port is being used by a Chrome instance we launched
- * (vs the user's personal browser). We verify by checking our PID file.
- */
-export function isOurChrome(port: number): boolean {
-  const pidData = readPidFile();
-  if (!pidData) return false;
-  if (pidData.port !== port) return false;
-  return isProcessRunning(pidData.pid);
 }

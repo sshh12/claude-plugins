@@ -43,7 +43,7 @@ Commands are separated by newlines. One command per line.
 ```json
 {
   "ok": true,
-  "screenshot": "/tmp/brw-screenshots/123.png",
+  "screenshot": "~/.config/brw/screenshots/123.png",
   "page": {"url": "...", "title": "...", "contentLength": 48230},
   "results": [
     {"command": "LT", "tabs": [{"id": 1, "url": "...", "title": "..."}]},

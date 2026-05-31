@@ -1,19 +1,14 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
-import { homedir, platform } from 'os';
+import { homedir } from 'os';
 import type { BrwConfig, ConfigSource, ResolvedConfig, ResolvedConfigEntry } from './types.js';
 
-const isLinux = platform() === 'linux';
-const defaultScreenshotDir = isLinux
-  ? join(homedir(), '.config', 'brw', 'screenshots')
-  : '/tmp/brw-screenshots';
-const defaultLogFile = isLinux
-  ? join(homedir(), '.config', 'brw', 'brw-proxy.log')
-  : '/tmp/brw-proxy.log';
+const configBase = join(homedir(), '.config', 'brw');
+const defaultScreenshotDir = join(configBase, 'screenshots');
+const defaultLogFile = join(configBase, 'brw-proxy.log');
 
 const DEFAULTS: BrwConfig = {
-  proxyPort: 9225,
-  cdpPort: 9222,
+  socketPath: join(homedir(), '.config', 'brw', 'proxy.sock'),
   chromeDataDir: join(homedir(), '.config', 'brw', 'chrome-data'),
   chromePath: null,
   headless: false,
@@ -30,12 +25,10 @@ const DEFAULTS: BrwConfig = {
   cookieScope: 'tab',
   autoScreenshot: true,
   logFile: defaultLogFile,
-  chromeLaunch: true,
 };
 
 interface ConfigFile {
-  proxyPort?: number;
-  cdpPort?: number;
+  socketPath?: string;
   chromeDataDir?: string;
   chromePath?: string;
   headless?: boolean;
@@ -52,7 +45,6 @@ interface ConfigFile {
   cookieScope?: string;
   autoScreenshot?: boolean;
   logFile?: string;
-  chromeLaunch?: boolean;
 }
 
 /** Security-sensitive keys where repo config cannot weaken user settings. */
@@ -255,8 +247,7 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
   const env = process.env;
 
   return {
-    proxyPort: resolveNumber(env.BRW_PORT, repoConfig?.proxyPort, userConfig?.proxyPort, DEFAULTS.proxyPort),
-    cdpPort: resolveNumber(env.BRW_CDP_PORT, repoConfig?.cdpPort, userConfig?.cdpPort, DEFAULTS.cdpPort),
+    socketPath: resolveString(env.BRW_SOCKET, repoConfig?.socketPath, userConfig?.socketPath, DEFAULTS.socketPath),
     chromeDataDir: resolveString(env.BRW_DATA_DIR, repoConfig?.chromeDataDir, userConfig?.chromeDataDir, DEFAULTS.chromeDataDir),
     chromePath: resolveStringOrNull(env.BRW_CHROME_PATH, repoConfig?.chromePath, userConfig?.chromePath, DEFAULTS.chromePath),
     headless: resolveBoolean(env.BRW_HEADLESS, repoConfig?.headless, userConfig?.headless, DEFAULTS.headless),
@@ -273,7 +264,6 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
     cookieScope: resolveString(env.BRW_COOKIE_SCOPE, repoConfig?.cookieScope, userConfig?.cookieScope, DEFAULTS.cookieScope),
     autoScreenshot: resolveBoolean(env.BRW_AUTO_SCREENSHOT, repoConfig?.autoScreenshot, userConfig?.autoScreenshot, DEFAULTS.autoScreenshot),
     logFile: resolveString(env.BRW_LOG_FILE, repoConfig?.logFile, userConfig?.logFile, DEFAULTS.logFile),
-    chromeLaunch: resolveBoolean(env.BRW_CHROME_LAUNCH, repoConfig?.chromeLaunch, userConfig?.chromeLaunch, DEFAULTS.chromeLaunch),
   };
 }
 

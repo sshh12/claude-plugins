@@ -8,15 +8,14 @@ export async function proxyRequest(
   method: string,
   path: string,
   body: Record<string, unknown>,
-  port: number,
+  socketPath: string,
   timeout: number,
   debug: boolean
 ): Promise<ApiResponse> {
   const bodyStr = method !== 'GET' ? JSON.stringify(body) : '';
-  const url = `http://localhost:${port}${path}`;
 
   if (debug) {
-    process.stderr.write(`[brw] ${method} ${url}\n`);
+    process.stderr.write(`[brw] ${method} ${socketPath} ${path}\n`);
     if (bodyStr) {
       process.stderr.write(`[brw] body: ${bodyStr}\n`);
     }
@@ -24,8 +23,9 @@ export async function proxyRequest(
 
   return new Promise((resolve, reject) => {
     const req = http.request(
-      url,
       {
+        socketPath,
+        path,
         method,
         headers: method !== 'GET' ? { 'Content-Type': 'application/json' } : {},
         timeout: timeout * 1000,
@@ -70,9 +70,9 @@ export async function proxyRequest(
 /**
  * Check if the proxy server is running by hitting the health endpoint.
  */
-export async function checkProxyHealth(port: number, timeout: number = 3): Promise<boolean> {
+export async function checkProxyHealth(socketPath: string, timeout: number = 3): Promise<boolean> {
   try {
-    const result = await proxyRequest('GET', '/health', {}, port, timeout, false);
+    const result = await proxyRequest('GET', '/health', {}, socketPath, timeout, false);
     return result.ok === true || (typeof result === 'object' && result !== null && 'pid' in result);
   } catch {
     return false;
@@ -83,9 +83,9 @@ export async function checkProxyHealth(port: number, timeout: number = 3): Promi
  * Ensure the proxy is running. If not, auto-start it.
  * startProxy() now polls /health internally, so no separate wait loop needed.
  */
-export async function ensureProxy(port: number, timeout: number, debug: boolean): Promise<void> {
+export async function ensureProxy(socketPath: string, timeout: number, debug: boolean): Promise<void> {
   // Quick health check
-  const isRunning = await checkProxyHealth(port, 3);
+  const isRunning = await checkProxyHealth(socketPath, 3);
   if (isRunning) return;
 
   if (debug) {
@@ -94,7 +94,7 @@ export async function ensureProxy(port: number, timeout: number, debug: boolean)
 
   // Auto-start proxy (blocks until healthy or throws with error details)
   const { startProxy } = await import('./proxy-launcher.js');
-  await startProxy(port, undefined, undefined, debug);
+  await startProxy(socketPath, undefined, undefined, debug);
 
   if (debug) {
     process.stderr.write('[brw] Proxy is ready.\n');

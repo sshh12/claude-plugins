@@ -146,7 +146,7 @@ function buildScript(matches: NetworkRequest[], pattern: string | undefined): st
   const strippedBlock = hasAnyStripped ? buildStrippedBlock(matches, stripped) : '';
 
   const body = matches.length === 0
-    ? `      // No matching requests captured. Try interacting with the page first,\n      // then re-run: /tmp/brw script gen --url-pattern <pattern>`
+    ? `      // No matching requests captured. Try interacting with the page first,\n      // then re-run: brw script gen --url-pattern <pattern>`
     : matches.map((req, i) => generateFetchCall(req, i)).join('\n\n');
 
   return `${header}${strippedBlock}

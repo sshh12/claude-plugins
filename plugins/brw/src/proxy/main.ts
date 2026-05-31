@@ -1,7 +1,7 @@
-import CDP from 'chrome-remote-interface';
+import CDP, { attachPipe, detachPipe } from './cdp-pipe.js';
 import Fastify from 'fastify';
-import { mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { mkdirSync, readdirSync, statSync, unlinkSync, existsSync, chmodSync } from 'fs';
+import { join, dirname } from 'path';
 import { getConfig, getSecurityWarnings } from '../shared/config.js';
 import { ErrorCode } from '../shared/types.js';
 import type { BrwConfig, ApiResponse } from '../shared/types.js';
@@ -146,38 +146,21 @@ async function relaunchChrome(): Promise<void> {
   try {
     logger.info('Relaunching Chrome...');
     await cdp.closeAll();
+    // Dispose the old pipe connection before re-attaching — rejects any
+    // in-flight promises and frees the dead fd4 listeners/session emitters.
+    detachPipe();
 
-    // Try reconnecting to existing Chrome first
-    let reconnected = false;
-    try {
-      const targets = await CDP.List({ port: config.cdpPort });
-      const pageTargets = targets.filter((t: any) => t.type === 'page');
-      if (pageTargets.length > 0) {
-        logger.info(`Found existing Chrome on CDP port ${config.cdpPort} (${pageTargets.length} tabs)`);
-        chromeProcess = null;
-        reconnected = true;
-      }
-    } catch {
-      // No existing Chrome
-    }
-
-    if (!reconnected) {
-      if (!config.chromeLaunch) {
-        throw new Error(`No existing Chrome found on CDP port ${config.cdpPort} and chromeLaunch is disabled. Start Chrome manually with: google-chrome --remote-debugging-port=${config.cdpPort}`);
-      }
-      chromeProcess = await launchChrome(config);
-      setupChromeExitHandler();
-    }
+    chromeProcess = await launchChrome(config);
+    attachPipe(chromeProcess.stdio![3] as any, chromeProcess.stdio![4] as any);
+    setupChromeExitHandler();
 
     const downloadDir = join(config.screenshotDir, 'downloads');
-    cdp = new CDPManager(config.cdpPort, downloadDir, config.headless);
+    cdp = new CDPManager(downloadDir, config.headless);
     cdp.setViewport(config.windowWidth, config.windowHeight);
     await cdp.connect();
 
-    // Set viewport and clear NTP on fresh Chrome only
-    if (!reconnected) {
-      await setupInitialTab(cdp, config);
-    }
+    // Set viewport and clear NTP on fresh Chrome
+    await setupInitialTab(cdp, config);
 
     chromeCrashed = false;
     logger.info('Chrome relaunched and connected');
@@ -221,6 +204,12 @@ async function shutdownProxy(keepChrome = false) {
         chromeProcess.kill('SIGKILL');
       }
     }, 3000);
+  }
+  detachPipe();
+  try {
+    if (existsSync(config.socketPath)) unlinkSync(config.socketPath);
+  } catch {
+    // ignore
   }
   removePidFile();
   process.exit(0);
@@ -426,7 +415,7 @@ function getErrorHint(code: string): string {
     case ErrorCode.PROXY_NOT_RUNNING:
       return 'Is the proxy running? Check: brw server status';
     case ErrorCode.PROXY_START_FAILED:
-      return 'Check if the proxy port is already in use, or try a different port with BRW_PORT';
+      return 'Check the proxy stderr log (~/.config/brw/brw-proxy-stderr.log), then try: brw server clean && brw server start';
     case ErrorCode.TIMEOUT:
       return 'Increase timeout with --timeout flag';
     case ErrorCode.FILE_NOT_FOUND:
@@ -475,7 +464,7 @@ async function main() {
   config = getConfig();
   logger = createLogger(config.logFile);
   setGlobalLogger(logger);
-  logger.info(`Config: port=${config.proxyPort} cdp=${config.cdpPort} idle=${config.idleTimeout}s viewport=${config.windowWidth}x${config.windowHeight} headless=${config.headless}`);
+  logger.info(`Config: socket=${config.socketPath} idle=${config.idleTimeout}s viewport=${config.windowWidth}x${config.windowHeight} headless=${config.headless}`);
 
   // Set up audit log
   if (config.auditLog) {
@@ -500,46 +489,27 @@ async function main() {
     audit('config_override_blocked', { warning: w });
   }
 
-  audit('proxy_start', { port: config.proxyPort, cdpPort: config.cdpPort });
+  audit('proxy_start', { socketPath: config.socketPath });
 
   // Create download directory
   const downloadDir = join(config.screenshotDir, 'downloads');
   mkdirSync(downloadDir, { recursive: true, mode: process.platform === 'linux' ? 0o700 : undefined });
 
-  // Try connecting to existing Chrome before launching a new one
-  let existingChrome = false;
-  try {
-    const targets = await CDP.List({ port: config.cdpPort });
-    const pageTargets = targets.filter((t: any) => t.type === 'page');
-    if (pageTargets.length > 0) {
-      logger.info(`Found existing Chrome on CDP port ${config.cdpPort} (${pageTargets.length} tabs)`);
-      existingChrome = true;
-      chromeProcess = null;
-    }
-  } catch {
-    // No existing Chrome — launch one
-  }
-
-  if (!existingChrome) {
-    if (!config.chromeLaunch) {
-      throw new Error(`No existing Chrome found on CDP port ${config.cdpPort} and chromeLaunch is disabled. Start Chrome manually with: google-chrome --remote-debugging-port=${config.cdpPort}`);
-    }
-    logger.info(`Launching Chrome on CDP port ${config.cdpPort}...`);
-    chromeProcess = await launchChrome(config);
-    setupChromeExitHandler();
-  }
+  // Always launch a fresh Chrome via --remote-debugging-pipe
+  logger.info('Launching Chrome...');
+  chromeProcess = await launchChrome(config);
+  attachPipe(chromeProcess.stdio![3] as any, chromeProcess.stdio![4] as any);
+  setupChromeExitHandler();
 
   // Connect to Chrome via CDP
   logger.info('Connecting to Chrome CDP...');
-  cdp = new CDPManager(config.cdpPort, downloadDir, config.headless);
+  cdp = new CDPManager(downloadDir, config.headless);
   cdp.setViewport(config.windowWidth, config.windowHeight);
   await cdp.connect();
   logger.info('Connected to Chrome CDP');
 
-  // Set initial viewport on the default tab and clear the NTP (only for fresh Chrome)
-  if (!existingChrome) {
-    await setupInitialTab(cdp, config);
-  }
+  // Set initial viewport on the default tab and clear the NTP
+  await setupInitialTab(cdp, config);
 
   // Create Fastify server
   const server = Fastify({ logger: false });
@@ -563,7 +533,7 @@ async function main() {
     return {
       ok: cdpOk && !chromeCrashed,
       pid: process.pid,
-      port: config.proxyPort,
+      socketPath: config.socketPath,
       chromeVersion: chromePath ? getChromeVersion(chromePath) : null,
       uptime: Math.round((Date.now() - lastActivity) / 1000),
       cdpConnected: cdpOk,
@@ -653,7 +623,7 @@ async function main() {
   server.post('/api/window-bounds', readHandler('window-bounds', async (body) => handleWindowBounds(cdp, body)));
 
   // Start the server
-  writePidFile(process.pid, config.proxyPort, chromeProcess?.pid);
+  writePidFile(process.pid, config.socketPath, chromeProcess?.pid);
   resetIdleTimer();
 
   // Periodic screenshot cleanup (every 10 minutes)
@@ -661,8 +631,13 @@ async function main() {
   cleanupScreenshots();
 
   try {
-    await server.listen({ port: config.proxyPort, host: '127.0.0.1' });
-    logger.info(`Listening on http://127.0.0.1:${config.proxyPort}`);
+    // Prepare the socket directory and remove any stale socket file
+    mkdirSync(dirname(config.socketPath), { recursive: true, mode: 0o700 });
+    if (existsSync(config.socketPath)) unlinkSync(config.socketPath);
+
+    await server.listen({ path: config.socketPath });
+    chmodSync(config.socketPath, 0o600);
+    logger.info(`Listening on unix:${config.socketPath}`);
   } catch (err) {
     logger.error(`Failed to start server: ${err}`);
     removePidFile();

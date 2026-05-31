@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/4f3ae6e4-f53e-4c57-9cea-48957bb82cf9
 
 - **Open and transparent**: Claude for Chrome is a black box requiring a subscription. brw is open source with full visibility into what's happening.
 - **Agent-friendly architecture**: Playwright MCP and Chrome DevTools MCP servers weren't designed for parallel agent workflows — they struggle with multiple agents sharing one browser. brw uses a proxy with per-tab mutexes, stateless CLI commands, and structured JSON output built for concurrent agent access.
-- **Lightweight**: No heavy MCP server overhead. A single proxy manages Chrome, and each CLI call is a simple HTTP request.
+- **Lightweight**: No heavy MCP server overhead. A single proxy manages Chrome, and each CLI call is a simple request over a per-user Unix socket.
 
 ## What it does
 
@@ -86,12 +86,11 @@ Configuration is resolved in priority order: env vars > `.claude/brw.json` (repo
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BRW_PORT` | `9225` | Proxy server port |
-| `BRW_CDP_PORT` | `9222` | Chrome debugging port |
+| `BRW_SOCKET` | `~/.config/brw/proxy.sock` | Proxy Unix domain socket path |
 | `BRW_DATA_DIR` | `~/.config/brw/chrome-data` | Chrome profile directory |
 | `BRW_CHROME_PATH` | Auto-detect | Path to browser binary |
 | `BRW_HEADLESS` | `false` | Run headless (no visible window) |
-| `BRW_SCREENSHOT_DIR` | `/tmp/brw-screenshots` | Screenshot output directory |
+| `BRW_SCREENSHOT_DIR` | `~/.config/brw/screenshots` | Screenshot output directory |
 | `BRW_ALLOWED_URLS` | `*` | Comma-separated URL glob patterns |
 
 ### Per-project config (`.claude/brw.json`)
@@ -117,10 +116,12 @@ Shows every resolved config value and where it came from (env, repo config, user
 ## Architecture
 
 ```
-Claude Agent ──HTTP──→ Proxy Server ──CDP/WS──→ Chrome
-                       (localhost:9225)          (localhost:9222)
+Claude Agent ──unix sock (0600)──→ Proxy Server ──FD pipe──→ Chrome
+              (~/.config/brw/proxy.sock)          (--remote-debugging-pipe)
 ```
 
-- **Proxy server**: Auto-launches on first CLI call. Manages Chrome lifecycle, CDP connections, tab state, and per-tab mutexes for safe concurrent access.
-- **CLI (`brw`)**: Stateless — each call sends an HTTP request to the proxy and prints the result. Mutation commands auto-return a screenshot.
+There is no TCP anywhere. The CLI talks to the proxy over a per-user Unix domain socket (mode `0600`) at `~/.config/brw/proxy.sock`, and the proxy talks to Chrome over `--remote-debugging-pipe` (inherited FDs 3/4 — no debugging port). The socket permissions plus the inherited pipe FDs give OS-enforced per-user isolation, so no other user (or process outside the proxy) can reach the browser.
+
+- **Proxy server**: Auto-launches on first CLI call. Manages Chrome lifecycle, CDP connections over the pipe, tab state, and per-tab mutexes for safe concurrent access. A server restart relaunches Chrome — open tabs are lost, but logins persist via the on-disk profile.
+- **CLI (`brw`)**: Stateless — each call sends a request over the Unix socket and prints the result. Mutation commands auto-return a screenshot.
 - **Multi-agent**: Multiple agents share one Chrome/proxy instance, isolated by tabs.

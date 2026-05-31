@@ -7,17 +7,21 @@ import { proxyRequest, ensureProxy, formatOutput } from './http.js';
 
 const config = getConfig();
 
+/** CLI/proxy version. Bump on breaking changes so `brw install` and the
+ *  SKILL bootstrap can detect a stale/shadowing brw earlier on PATH. */
+const VERSION = '0.9.0';
+
 const program = new Command();
 
 program
   .name('brw')
-  .version('0.8.0')
+  .version(VERSION)
   .description('Browser automation for Claude Code via Chrome DevTools Protocol')
   .option('-t, --tab <id>', 'Target tab ID (default: active tab)')
   .option('--plain', 'Output as plain text instead of JSON')
   .option('--http-timeout <seconds>', 'CLI request timeout', '30')
   .option('--debug', 'Verbose logging to stderr')
-  .option('--port <port>', 'Proxy server port');
+  .option('--socket <path>', 'Proxy Unix socket path');
 
 function parseWait(val: unknown): number | undefined {
   if (val === undefined) return undefined;
@@ -25,19 +29,19 @@ function parseWait(val: unknown): number | undefined {
   return parseInt(String(val), 10) || 10;
 }
 
-function getPort(): number {
+function getSocket(): string {
   const opts = program.opts();
-  return opts.port ? parseInt(opts.port, 10) : config.proxyPort;
+  return opts.socket || config.socketPath;
 }
 
-function getGlobalOpts(): { tab?: string; text: boolean; timeout: number; debug: boolean; port: number } {
+function getGlobalOpts(): { tab?: string; text: boolean; timeout: number; debug: boolean; socketPath: string } {
   const opts = program.opts();
   return {
     tab: opts.tab,
     text: !!opts.plain,
     timeout: parseInt(opts.httpTimeout, 10) || 30,
     debug: !!opts.debug,
-    port: getPort(),
+    socketPath: getSocket(),
   };
 }
 
@@ -58,7 +62,7 @@ async function run(
   }
 
   try {
-    await ensureProxy(globals.port, globals.timeout, globals.debug);
+    await ensureProxy(globals.socketPath, globals.timeout, globals.debug);
   } catch (err: any) {
     const msg = err?.message || 'Failed to connect to proxy';
     const result = { ok: false, error: msg, code: 'PROXY_NOT_RUNNING', hint: 'Run `brw server start` or check that Node.js is available.' };
@@ -67,7 +71,7 @@ async function run(
   }
 
   try {
-    let result = await proxyRequest(method, endpoint, body, globals.port, globals.timeout, globals.debug);
+    let result = await proxyRequest(method, endpoint, body, globals.socketPath, globals.timeout, globals.debug);
 
     process.stdout.write(formatOutput(result, globals.text) + '\n');
 
@@ -1077,8 +1081,8 @@ scriptCmd
       if (body.tab === undefined && globals.tab) body.tab = globals.tab;
       const extendedTimeout = Math.max(globals.timeout, timeout + 20);
       try {
-        await ensureProxy(globals.port, extendedTimeout, globals.debug);
-        const result = await proxyRequest('POST', '/api/script/run', body, globals.port, extendedTimeout, globals.debug);
+        await ensureProxy(globals.socketPath, extendedTimeout, globals.debug);
+        const result = await proxyRequest('POST', '/api/script/run', body, globals.socketPath, extendedTimeout, globals.debug);
         const { writeFileSync } = await import('fs');
         let writtenBytes = 0;
         let written = false;
@@ -1145,7 +1149,7 @@ program
   .option('--lines <n>', 'Number of log lines to show', '50')
   .action(async (opts) => {
     const { readLogTail } = await import('../proxy/logger.js');
-    const logFile = config.logFile || '/tmp/brw-proxy.log';
+    const logFile = config.logFile;
     const lines = parseInt(opts.lines, 10) || 50;
     const tail = readLogTail(logFile, lines);
     if (tail.trim()) {
@@ -1195,7 +1199,7 @@ program
         const valStr = Array.isArray(value) ? value.join(', ') : String(value ?? 'null');
         process.stdout.write(`  ${key.padEnd(18)} ${valStr.padEnd(40)} (${source})\n`);
       }
-      process.stdout.write(`\nProxy status:    ${proxyRunning ? `running (pid ${pidData!.pid}, port ${pidData!.port})` : 'not running'}\n`);
+      process.stdout.write(`\nProxy status:    ${proxyRunning ? `running (pid ${pidData!.pid}, socket ${pidData!.socketPath})` : 'not running'}\n`);
       process.stdout.write(`Chrome binary:   ${chromePath || 'not found'}\n`);
       process.stdout.write(`Chrome version:  ${chromeVersion || 'unknown'}\n`);
     } else {
@@ -1203,7 +1207,7 @@ program
         ok: true,
         config: resolved,
         proxy: proxyRunning
-          ? { running: true, pid: pidData!.pid, port: pidData!.port }
+          ? { running: true, pid: pidData!.pid, socketPath: pidData!.socketPath }
           : { running: false },
         chrome: {
           path: chromePath || null,
@@ -1214,6 +1218,134 @@ program
           user: { path: userConfigPath, found: userConfigFound },
         },
       }, null, 2) + '\n');
+    }
+  });
+
+// ---- install ----
+
+program
+  .command('install')
+  .allowUnknownOption()
+  .description('Symlink the brw CLI into ~/.local/bin and report PATH setup steps')
+  .action(async () => {
+    // Pure-local; does NOT contact the proxy.
+    const { join } = await import('path');
+    const { homedir } = await import('os');
+    const { existsSync, readlinkSync, unlinkSync, symlinkSync, mkdirSync } = await import('fs');
+    const { execSync } = await import('child_process');
+    const globals = getGlobalOpts();
+
+    const targetDir = join(homedir(), '.local', 'bin');
+    const linkPath = join(targetDir, 'brw');
+    const target = __filename; // brw.js (has shebang, executable)
+    mkdirSync(targetDir, { recursive: true });
+
+    let linkError: string | undefined;
+    try {
+      if (existsSync(linkPath)) {
+        let current: string | undefined;
+        try {
+          current = readlinkSync(linkPath);
+        } catch {
+          current = undefined;
+        }
+        if (current !== target) {
+          try { unlinkSync(linkPath); } catch { /* ignore */ }
+          symlinkSync(target, linkPath);
+        }
+      } else {
+        symlinkSync(target, linkPath);
+      }
+    } catch (err: any) {
+      linkError = err?.message || String(err);
+    }
+
+    // PATH + shadow/version detection. We must catch the case where a
+    // *different* or *older* brw is earlier on PATH — it would run instead of
+    // the build we just linked, silently using stale (pre-isolation) code.
+    const pathDirs = (process.env.PATH || '').split(':');
+    const onPath = pathDirs.includes(targetDir);
+    let resolvedPath: string | undefined;
+    let shadowedBy: string | undefined;
+    let onPathVersion: string | undefined;
+    try {
+      resolvedPath = execSync('command -v brw', { shell: '/bin/sh', encoding: 'utf-8' }).trim() || undefined;
+      if (resolvedPath && resolvedPath !== linkPath) shadowedBy = resolvedPath;
+    } catch { /* not found on PATH */ }
+    if (resolvedPath) {
+      // Version of whatever bare `brw` actually resolves to (the effective one).
+      try {
+        onPathVersion = execSync('brw --version', { shell: '/bin/sh', encoding: 'utf-8', timeout: 5000 }).trim() || undefined;
+      } catch { /* old binary may predate --version, or errored */ }
+    }
+    const versionMismatch = !!(onPathVersion && onPathVersion !== VERSION);
+
+    // Shell profile + export line from process.env.SHELL basename
+    const shellName = (process.env.SHELL || '').split('/').pop() || '';
+    let profile: string;
+    let exportLine: string;
+    if (shellName === 'zsh') {
+      profile = join(homedir(), '.zshrc');
+      exportLine = 'export PATH="$HOME/.local/bin:$PATH"';
+    } else if (shellName === 'bash') {
+      profile = join(homedir(), '.bashrc');
+      exportLine = 'export PATH="$HOME/.local/bin:$PATH"';
+    } else if (shellName === 'fish') {
+      profile = join(homedir(), '.config', 'fish', 'config.fish');
+      exportLine = 'fish_add_path "$HOME/.local/bin"';
+    } else {
+      profile = join(homedir(), '.profile');
+      exportLine = 'export PATH="$HOME/.local/bin:$PATH"';
+    }
+
+    // "ready" means: bare `brw` resolves to THIS build (right path, right version).
+    const ready = onPath && !shadowedBy && !versionMismatch;
+
+    const nextSteps: string[] = [];
+    if (shadowedBy || versionMismatch) {
+      // A different/older brw wins on PATH — the dangerous case.
+      const which = shadowedBy
+        ? `A different brw is earlier on your PATH at ${shadowedBy}${onPathVersion ? ` (version ${onPathVersion})` : ''}`
+        : `The brw on your PATH reports version ${onPathVersion}, but this build is ${VERSION}`;
+      nextSteps.push(`${which}; it will run instead of the freshly linked ${VERSION} at ${linkPath}. Remove/deprioritize it, or make ${targetDir} take precedence by appending the following line to ${profile}: ${exportLine}`);
+      nextSteps.push('Restart the Claude Code session (or source the profile), then re-run "brw install" and confirm ready:true.');
+    } else if (!onPath) {
+      nextSteps.push(`Append the following line to ${profile}: ${exportLine}`);
+      nextSteps.push('Restart the Claude Code session (or source the profile) so the new PATH takes effect.');
+      nextSteps.push(`Re-run "command -v brw" and confirm it resolves to ${linkPath}.`);
+    }
+
+    const result: Record<string, unknown> = {
+      ok: true,
+      ready,
+      version: VERSION,
+      linkPath,
+      target,
+      onPath,
+      shadowedBy,
+      onPathVersion,
+      versionMismatch,
+      profile,
+      exportLine,
+      nextSteps,
+    };
+    if (linkError) result.linkError = linkError;
+
+    if (globals.text) {
+      process.stdout.write(`version: ${VERSION}\n`);
+      process.stdout.write(`linkPath: ${linkPath}\n`);
+      process.stdout.write(`onPath: ${onPath}\n`);
+      if (shadowedBy) process.stdout.write(`shadowedBy: ${shadowedBy}\n`);
+      if (onPathVersion && onPathVersion !== VERSION) process.stdout.write(`onPathVersion: ${onPathVersion} (MISMATCH — expected ${VERSION})\n`);
+      if (ready) {
+        process.stdout.write('brw is ready.\n');
+      } else {
+        nextSteps.forEach((step, i) => {
+          process.stdout.write(`${i + 1}. ${step}\n`);
+        });
+      }
+    } else {
+      process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     }
   });
 
@@ -1239,7 +1371,7 @@ serverCmd
 
       // Stop proxy if running
       try {
-        await proxyRequest('POST', '/shutdown', {}, globals.port, 5, globals.debug);
+        await proxyRequest('POST', '/shutdown', {}, globals.socketPath, 5, globals.debug);
       } catch { /* may not be running */ }
 
       // Wait for proxy process to exit
@@ -1268,7 +1400,7 @@ serverCmd
 
     const { startProxy } = await import('./proxy-launcher.js');
     try {
-      const result = await startProxy(globals.port, opts.chromeDataDir, opts.headless, globals.debug);
+      const result = await startProxy(globals.socketPath, opts.chromeDataDir, opts.headless, globals.debug);
       process.stdout.write(formatOutput(result, globals.text) + '\n');
     } catch (err: any) {
       const result = { ok: false, error: err?.message || 'Failed to start proxy', code: 'PROXY_START_FAILED' };
@@ -1286,7 +1418,7 @@ serverCmd
     const pidData = readPidFile();
 
     try {
-      await proxyRequest('POST', '/shutdown', {}, globals.port, 5, globals.debug);
+      await proxyRequest('POST', '/shutdown', {}, globals.socketPath, 5, globals.debug);
     } catch {
       // Server might already be dead
     }
@@ -1307,14 +1439,14 @@ serverCmd
 
 serverCmd
   .command('restart')
-  .description('Restart the proxy server (keeps Chrome alive)')
+  .description('Restart the proxy server (Chrome is relaunched; open tabs are lost but login/cookies persist via the on-disk profile)')
   .action(async () => {
     const globals = getGlobalOpts();
     const { readPidFile, isProcessRunning } = await import('../proxy/chrome.js');
 
-    // Send shutdown with keepChrome=true
+    // Send shutdown; Chrome is always relaunched fresh on the next start
     try {
-      await proxyRequest('POST', '/shutdown', { keepChrome: true }, globals.port, 5, globals.debug);
+      await proxyRequest('POST', '/shutdown', {}, globals.socketPath, 5, globals.debug);
     } catch {
       // Server might already be dead
     }
@@ -1331,9 +1463,10 @@ serverCmd
       }
     }
 
-    // Re-start proxy (will reconnect to existing Chrome via CDP.List)
+    // Re-start proxy (Chrome is relaunched; open tabs are lost but login/cookies
+    // persist via the on-disk profile)
     try {
-      await ensureProxy(globals.port, globals.timeout, globals.debug);
+      await ensureProxy(globals.socketPath, globals.timeout, globals.debug);
     } catch (err: any) {
       const result = { ok: false, error: err?.message || 'Failed to restart proxy', code: 'PROXY_START_FAILED' };
       process.stdout.write(formatOutput(result, globals.text) + '\n');
@@ -1342,12 +1475,12 @@ serverCmd
 
     // Check health
     try {
-      const result = await proxyRequest('GET', '/health', {}, globals.port, 5, globals.debug);
+      const result = await proxyRequest('GET', '/health', {}, globals.socketPath, 5, globals.debug);
       process.stdout.write(formatOutput({
         ok: true,
         restarted: true,
         pid: result.pid,
-        port: result.port,
+        socketPath: result.socketPath,
         cdpConnected: result.cdpConnected,
       }, globals.text) + '\n');
     } catch {
@@ -1367,7 +1500,7 @@ serverCmd
     // Stop proxy if running
     let proxyStopped = false;
     try {
-      await proxyRequest('POST', '/shutdown', {}, globals.port, 5, globals.debug);
+      await proxyRequest('POST', '/shutdown', {}, globals.socketPath, 5, globals.debug);
       proxyStopped = true;
     } catch { /* may not be running */ }
 
@@ -1407,12 +1540,12 @@ serverCmd
   .action(async () => {
     const globals = getGlobalOpts();
     try {
-      const result = await proxyRequest('GET', '/health', {}, globals.port, 5, globals.debug);
+      const result = await proxyRequest('GET', '/health', {}, globals.socketPath, 5, globals.debug);
       process.stdout.write(formatOutput({
         ok: true,
         running: true,
         pid: result.pid,
-        port: result.port,
+        socketPath: result.socketPath,
         chromeVersion: result.chromeVersion,
         uptime: result.uptime,
         // Security config
@@ -1427,7 +1560,7 @@ serverCmd
         autoScreenshot: result.autoScreenshot,
       }, globals.text) + '\n');
     } catch {
-      process.stdout.write(formatOutput({ ok: true, running: false, pid: null, port: null, chromeVersion: null }, globals.text) + '\n');
+      process.stdout.write(formatOutput({ ok: true, running: false, pid: null, socketPath: null, chromeVersion: null }, globals.text) + '\n');
       process.exit(ExitCode.USAGE_ERROR);
     }
   });
@@ -1437,31 +1570,6 @@ program.on('command:*', () => {
   process.stderr.write(`Unknown command: ${program.args.join(' ')}\nRun "brw --help" for usage.\n`);
   process.exit(ExitCode.USAGE_ERROR);
 });
-
-// Auto-create /tmp/brw symlink pointing to this script
-(function autoSetupSymlink() {
-  const symlinkPath = '/tmp/brw';
-  const targetPath = __filename; // brw.js (has shebang, is executable)
-  try {
-    const { existsSync, readlinkSync, unlinkSync, symlinkSync } = require('fs');
-    let needsCreate = true;
-    if (existsSync(symlinkPath)) {
-      try {
-        const current = readlinkSync(symlinkPath);
-        if (current === targetPath) needsCreate = false;
-        else unlinkSync(symlinkPath);
-      } catch {
-        // Not a symlink or broken — remove and recreate
-        try { unlinkSync(symlinkPath); } catch { /* ignore */ }
-      }
-    }
-    if (needsCreate) {
-      symlinkSync(targetPath, symlinkPath);
-    }
-  } catch {
-    // Best-effort — don't fail the CLI if symlink creation fails
-  }
-})();
 
 program.parseAsync(process.argv).catch((err) => {
   process.stderr.write(`Error: ${err.message}\n`);

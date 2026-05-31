@@ -10,6 +10,15 @@ brw mitigates these by blocking dangerous protocols and cloud metadata by defaul
 
 **Important limitation**: brw's security controls only cover the browser attack surface. A malicious page can still embed hidden instructions that trick the AI agent into taking harmful actions *outside* the browser — such as running shell commands, writing files, or calling APIs via the agent's other tools. brw cannot prevent this because the prompt injection happens at the agent level, not the browser level. Defense in depth (sandboxed environments, restricted agent permissions, human-in-the-loop approval for sensitive actions) is essential.
 
+## Transport Security
+
+brw uses two private, port-less transports so that no debugging endpoint is ever exposed on the network:
+
+- **CLI ↔ proxy** over a **per-user Unix domain socket** (default `~/.config/brw/proxy.sock`, mode `0600`). Because the socket lives in the user's home directory and is created with owner-only permissions, access is OS-enforced and isolated to that user — another local user account cannot connect to it. The socket path is configurable via `BRW_SOCKET`.
+- **proxy ↔ Chrome** over **`--remote-debugging-pipe`** (CDP runs over inherited file descriptors between the proxy and the Chrome child process, with no listening port). The pipe is private to the proxy/Chrome process pair and is not reachable by any other process.
+
+Earlier versions exposed the proxy and CDP over **loopback TCP ports** (e.g. `127.0.0.1`). A loopback port is reachable by *any* local user on the machine, so any other account could connect to the debugging endpoint and drive the browser or read its traffic. Removing the loopback TCP ports in favor of a `0600` Unix socket plus an inherited pipe removes that cross-local-user exposure entirely — there is no port for another user to connect to.
+
 ## Default Protections
 
 Out of the box, brw applies these security defaults:
@@ -98,7 +107,7 @@ No config needed. Default protections apply automatically.
   "blockedUrls": ["*"],
   "disabledCommands": ["js", "script-run", "script-gen", "auth-tokens", "intercept", "cookies", "storage"],
   "auditLog": "/var/log/brw-audit.jsonl",
-  "allowedPaths": ["/tmp/brw-screenshots"]
+  "allowedPaths": ["~/.config/brw/screenshots"]
 }
 ```
 

@@ -22,7 +22,7 @@ Mutation commands return a screenshot and page fingerprint:
 ```json
 {
   "ok": true,
-  "screenshot": "/tmp/brw-screenshots/1709234567890.png",
+  "screenshot": "~/.config/brw/screenshots/1709234567890.png",
   "page": {"url": "https://example.com", "title": "Example", "contentLength": 48230}
 }
 ```
@@ -100,7 +100,7 @@ brw screenshot [--full-page] [--ref REF] [--region x1,y1,x2,y2] [--tab ID]
 
 - Max dimension: 1568px (Claude vision sweet spot)
 - Retina displays are downscaled to CSS pixel dimensions
-- Screenshots saved to `BRW_SCREENSHOT_DIR` (default: `/tmp/brw-screenshots`)
+- Screenshots saved to `BRW_SCREENSHOT_DIR` (default: `~/.config/brw/screenshots`)
 
 ---
 
@@ -599,7 +599,7 @@ return await res.json();
 ```
 
 ```bash
-/tmp/brw script run /tmp/pull.js --timeout 30 --output /tmp/pull.json
+brw script run /tmp/pull.js --timeout 30 --output /tmp/pull.json
 ```
 
 ### `brw script gen`
@@ -633,19 +633,19 @@ Typical workflow:
 
 ```bash
 # 1. Open + survey
-/tmp/brw new-tab https://app.example.com --alias tab-x --wait dom
-/tmp/brw auth-tokens --probe https://app.example.com/api/me --tab tab-x
+brw new-tab https://app.example.com --alias tab-x --wait dom
+brw auth-tokens --probe https://app.example.com/api/me --tab tab-x
 
 # 2. Trigger and discover
-/tmp/brw navigate https://app.example.com/feed --tab tab-x
-/tmp/brw network --url-pattern api --with-body-preview 300 --tab tab-x
-/tmp/brw network-request <id> --tab tab-x
+brw navigate https://app.example.com/feed --tab tab-x
+brw network --url-pattern api --with-body-preview 300 --tab tab-x
+brw network-request <id> --tab tab-x
 
 # 3. Generate starter and edit
-/tmp/brw script gen --url-pattern api/feed --output /tmp/feed-pull.js --tab tab-x
+brw script gen --url-pattern api/feed --output /tmp/feed-pull.js --tab tab-x
 
 # 4. Run
-/tmp/brw script run /tmp/feed-pull.js --output /tmp/feed.json --tab tab-x
+brw script run /tmp/feed-pull.js --output /tmp/feed.json --tab tab-x
 ```
 
 See `references/SCRIPT-WORKFLOW.md` for the full runbook (auth patterns, pagination types, response shapes, gotchas).
@@ -828,7 +828,7 @@ Priority (highest wins): Environment variables > `.claude/brw.json` > `~/.config
 | Chrome data dir | `BRW_DATA_DIR` | `~/.config/brw/chrome-data` |
 | Chrome path | `BRW_CHROME_PATH` | Auto-detect |
 | Headless | `BRW_HEADLESS` | false |
-| Screenshot dir | `BRW_SCREENSHOT_DIR` | `/tmp/brw-screenshots` |
+| Screenshot dir | `BRW_SCREENSHOT_DIR` | `~/.config/brw/screenshots` |
 | Idle timeout | `BRW_IDLE_TIMEOUT` | 1800s |
 | Window size | `BRW_WIDTH` / `BRW_HEIGHT` | 1280 x 800 |
 | URL allowlist | `BRW_ALLOWED_URLS` | `*` (all) |
@@ -839,7 +839,7 @@ Priority (highest wins): Environment variables > `.claude/brw.json` > `~/.config
 | Audit log | `BRW_AUDIT_LOG` | (disabled) |
 | Allowed paths | `BRW_ALLOWED_PATHS` | (unrestricted) |
 | Auto-screenshot | `BRW_AUTO_SCREENSHOT` | true |
-| Log file | `BRW_LOG_FILE` | `/tmp/brw-proxy.log` |
+| Log file | `BRW_LOG_FILE` | `~/.config/brw/brw-proxy.log` |
 
 ---
 

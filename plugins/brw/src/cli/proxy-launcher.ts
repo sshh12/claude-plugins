@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
-import { openSync, closeSync, readFileSync } from 'fs';
+import { openSync, closeSync, readFileSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
-import { homedir, platform } from 'os';
+import { homedir } from 'os';
 import http from 'http';
 import { readPidFile, isProcessRunning } from '../proxy/chrome.js';
 import type { ApiResponse } from '../shared/types.js';
@@ -9,7 +9,7 @@ import type { ApiResponse } from '../shared/types.js';
 /**
  * Poll the proxy health endpoint until it responds or timeout.
  */
-function pollHealth(port: number, timeoutMs: number, intervalMs: number): Promise<boolean> {
+function pollHealth(socketPath: string, timeoutMs: number, intervalMs: number): Promise<boolean> {
   const start = Date.now();
   return new Promise((resolve) => {
     const check = () => {
@@ -17,7 +17,7 @@ function pollHealth(port: number, timeoutMs: number, intervalMs: number): Promis
         resolve(false);
         return;
       }
-      const req = http.get(`http://127.0.0.1:${port}/health`, { timeout: 1000 }, (res) => {
+      const req = http.get({ socketPath, path: '/health', timeout: 1000 }, (res) => {
         let data = '';
         res.on('data', (chunk) => (data += chunk));
         res.on('end', () => {
@@ -40,7 +40,7 @@ function pollHealth(port: number, timeoutMs: number, intervalMs: number): Promis
  * Polls /health to confirm the server is ready before returning.
  */
 export async function startProxy(
-  port: number,
+  socketPath: string,
   chromeDataDir?: string,
   headless?: boolean,
   debug?: boolean
@@ -48,7 +48,7 @@ export async function startProxy(
   // Check if already running
   const pidData = readPidFile();
   if (pidData && isProcessRunning(pidData.pid)) {
-    return { ok: true, pid: pidData.pid, port: pidData.port } as ApiResponse;
+    return { ok: true, pid: pidData.pid, socketPath: pidData.socketPath } as ApiResponse;
   }
 
   // Resolve path to proxy.js script
@@ -58,22 +58,20 @@ export async function startProxy(
 
   // Build env vars for child process
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
-  env.BRW_PORT = String(port);
+  env.BRW_SOCKET = socketPath;
   if (chromeDataDir) env.BRW_DATA_DIR = chromeDataDir;
   if (headless) env.BRW_HEADLESS = 'true';
 
   if (debug) {
     process.stderr.write(`[brw] Starting proxy: node ${proxyScript}\n`);
-    process.stderr.write(`[brw] Port: ${port}\n`);
+    process.stderr.write(`[brw] Socket: ${socketPath}\n`);
   }
 
   // Redirect stderr to a file instead of piping — piping causes SIGPIPE
   // death when the parent exits and the child writes to the broken pipe.
   // Use the proxy log file so error output isn't lost.
-  const isLinux = platform() === 'linux';
-  const stderrLog = isLinux
-    ? join(homedir(), '.config', 'brw', 'brw-proxy-stderr.log')
-    : '/tmp/brw-proxy-stderr.log';
+  const stderrLog = join(homedir(), '.config', 'brw', 'brw-proxy-stderr.log');
+  mkdirSync(dirname(stderrLog), { recursive: true });
   const stderrFd = openSync(stderrLog, 'w');
 
   const child = spawn('node', [proxyScript], {
@@ -101,14 +99,14 @@ export async function startProxy(
   });
 
   // Poll /health every 200ms for up to 10s
-  const healthy = await pollHealth(port, 10000, 200);
+  const healthy = await pollHealth(socketPath, 10000, 200);
 
   // Close the fd in the parent (child has its own copy)
   try { closeSync(stderrFd); } catch { /* ignore */ }
 
   if (healthy) {
     child.unref();
-    return { ok: true, pid, port } as ApiResponse;
+    return { ok: true, pid, socketPath } as ApiResponse;
   }
 
   // Server failed to start

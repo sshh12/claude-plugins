@@ -1,4 +1,6 @@
-import CDP from 'chrome-remote-interface';
+import CDP from './cdp-pipe.js';
+import { homedir } from 'os';
+import { join } from 'path';
 import type { TabInfo, ConsoleMessage, NetworkRequest } from '../shared/types.js';
 import { getGlobalLogger } from './logger.js';
 
@@ -65,7 +67,6 @@ const MAX_POST_DATA_SIZE = 16 * 1024; // 16KB cap on captured request bodies
 export class CDPManager {
   private tabs = new Map<string, TabState>();
   private activeTabId: string | null = null;
-  private cdpPort: number;
   private downloadDir: string;
   private viewportWidth: number = 0;
   private viewportHeight: number = 0;
@@ -76,9 +77,8 @@ export class CDPManager {
 
   private headless: boolean;
 
-  constructor(cdpPort: number, downloadDir?: string, headless: boolean = false) {
-    this.cdpPort = cdpPort;
-    this.downloadDir = downloadDir || '/tmp/brw-screenshots/downloads';
+  constructor(downloadDir?: string, headless: boolean = false) {
+    this.downloadDir = downloadDir || join(homedir(), '.config', 'brw', 'screenshots', 'downloads');
     this.headless = headless;
   }
 
@@ -126,7 +126,7 @@ export class CDPManager {
     // Wait for Chrome to be ready
     while (this.connectRetries < this.maxConnectRetries) {
       try {
-        const targets = await CDP.List({ port: this.cdpPort });
+        const targets = await CDP.List();
         const pageTargets = targets.filter((t: any) => t.type === 'page');
         if (pageTargets.length > 0) {
           // Connect to existing pages
@@ -150,7 +150,7 @@ export class CDPManager {
       logger.info(`CDP connect attempt ${this.connectRetries}/${this.maxConnectRetries}...`);
       await new Promise((r) => setTimeout(r, 1000));
     }
-    throw new Error(`Failed to connect to Chrome CDP on port ${this.cdpPort} after ${this.maxConnectRetries}s`);
+    throw new Error(`Failed to connect to Chrome CDP after ${this.maxConnectRetries}s`);
   }
 
   private async attachToTarget(targetId: string): Promise<TabState> {
@@ -159,7 +159,6 @@ export class CDPManager {
     }
 
     const client = (await CDP({
-      port: this.cdpPort,
       target: targetId,
     })) as unknown as CDPClient;
 
@@ -542,7 +541,7 @@ export class CDPManager {
   }
 
   async listTabs(): Promise<TabInfo[]> {
-    const targets = await CDP.List({ port: this.cdpPort });
+    const targets = await CDP.List();
     const pageTargets = targets.filter((t: any) => t.type === 'page');
 
     // Attach to any new tabs
@@ -611,7 +610,6 @@ export class CDPManager {
       return { tabId: targetId, url: state.url || url || 'about:blank' };
     }
     const target = await CDP.New({
-      port: this.cdpPort,
       url: url || 'about:blank',
     });
     await new Promise((r) => setTimeout(r, 200));
@@ -644,7 +642,7 @@ export class CDPManager {
       }
     }
     try {
-      await CDP.Activate({ port: this.cdpPort, id: resolved });
+      await CDP.Activate({ id: resolved });
     } catch (err: any) {
       getGlobalLogger().warn(`CDP.Activate failed for ${resolved}: ${err?.message}`);
     }
@@ -670,7 +668,7 @@ export class CDPManager {
 
     if (!closed) {
       try {
-        await CDP.Close({ port: this.cdpPort, id: resolved });
+        await CDP.Close({ id: resolved });
       } catch {
         // ignore
       }
