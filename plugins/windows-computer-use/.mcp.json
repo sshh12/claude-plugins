@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "windows-computer-use": {
+      "command": "cmd.exe",
+      "args": ["/d", "/s", "/c", "${CLAUDE_PLUGIN_ROOT}\\launch.cmd"]
+    }
+  }
+}

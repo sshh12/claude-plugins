@@ -1,0 +1,9 @@
+{
+  "name": "windows-computer-use",
+  "version": "0.1.0",
+  "description": "Full Windows computer-use for Claude over MCP: multi-monitor screen capture, per-window GPU capture, scan-code keyboard/mouse input, video recording, and a game/app play-test loop.",
+  "author": { "name": "sshh12" },
+  "repository": "https://github.com/sshh12/windows-computer-use-mcp",
+  "license": "MIT",
+  "keywords": ["computer-use", "windows", "automation", "screen-capture", "input", "mcp", "games"]
+}
