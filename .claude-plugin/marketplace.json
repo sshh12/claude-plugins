@@ -32,6 +32,11 @@
       "name": "cc-essentials",
       "source": "./plugins/cc-essentials",
       "description": "Essential meta-skills for working with Claude Code: builders for skills and long-running agent teams"
+    },
+    {
+      "name": "windows-computer-use",
+      "source": "./plugins/windows-computer-use",
+      "description": "Full Windows computer-use over MCP: multi-monitor screen capture, scan-code keyboard/mouse input, video recording, and a game/app play-test loop"
     }
   ]
 }

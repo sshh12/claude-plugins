@@ -89,3 +89,22 @@ Meta-skills for working with Claude Code itself.
 
 - **`build-skill`** — walks you through building a project skill end-to-end: problem framing, data mapping, SKILL.md, testing on real tasks, and committing it to the repo.
 - **`build-agent-team`** — designs a long-running, autonomous agent team for the current project and writes a `/start-<team>-team` skill that spawns it. Loop-based role design, mandatory leader + auditor, comms protocol, and reward-hacking review passes baked in. Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`.
+
+### [windows-computer-use](https://github.com/sshh12/claude-plugins/tree/main/plugins/windows-computer-use)
+
+Full **computer use for Windows** as an MCP server — multi-monitor screen capture, native keyboard/mouse input, video recording, and a game/app play-test loop. Claude drives the actual Windows desktop: open apps, click, type, see the screen, and play-test software.
+
+**Why?** Anthropic's official computer use in the Claude Code CLI is a macOS-only research preview (Pro/Max, interactive sessions only — not `-p`). There's no official, non-Desktop computer-use for Windows. This server fills that gap: a standard MCP server that works on Windows in Claude Code (interactive *and* headless `-p`), Claude Desktop, or any MCP client — with real multi-monitor capture, per-window GPU capture, scan-code input that games respond to, and play-testing. Runs on the machine it controls, so it reads the actual displays rather than requesting a resolution.
+
+```
+/plugin marketplace add sshh12/claude-plugins
+/plugin install windows-computer-use@shrivu-plugins
+```
+
+First run bootstraps a Python venv and installs the server from GitHub, then it auto-starts. Key capabilities:
+- **See**: the whole desktop, a specific monitor, or a single window (even occluded / GPU-composited) — downscaled inline, with the coordinate frame for subsequent clicks
+- **Do**: batched `act` — click, type, scroll, drag, keyboard shortcuts; scan-code keys and relative mouse so games respond
+- **Read without screenshots**: `window get_text` / `ui_tree` / `click_element` via UI Automation (~10x fewer tokens than a screenshot)
+- **Record & play-test**: capture a clip as a timestamped frame montage + mp4; drive a timed input script at a cadence while recording, with telemetry-driven early stop
+- **Process & readiness**: launch apps/URLs/Store apps, wait for a window or file, run shell commands
+- **Multi-monitor + DPI aware**: reads the real displays; targets `display:0` / `display:primary|left|right`
