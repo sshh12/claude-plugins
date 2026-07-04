@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Node.js 18+
-- A WhatsApp account on a phone (used to scan the pairing QR)
+- A WhatsApp account on a phone (used to enter the pairing code or scan the QR)
 
 ## Step 1: Install the plugin
 
@@ -14,21 +14,43 @@
 
 Restart Claude Code so the MCP server registered in `.mcp.json` is picked up.
 
-## Step 2: Pair the device (QR)
+## Step 2: Pair the device
 
-On first start the MCP server detects no credentials and pushes a system channel notification with the QR file path (default `/tmp/whatsup-qr.png`). Claude will either surface this to the user or you can prompt for it:
+### Option A — phone pairing code (no QR, no GUI — recommended)
+
+Best for headless/background hosts where you can't view an image. In Claude, ask:
+
+> "Pair whatsapp with my number 18005551234."
+
+Claude calls the `pair_request` tool, which returns an 8-character code. On the phone, go to **WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead"** and enter the code. Set `WHATSUP_PAIR_PHONE` to your own number to skip passing it each time (and to lock pairing to that number):
 
 ```bash
-# In Claude, ask: "what's the whatsup status?"
-# Claude calls the `status` tool which returns the qrCodeFile path when pairing is pending.
-
-open /tmp/whatsup-qr.png   # macOS
-# or: xdg-open /tmp/whatsup-qr.png   # Linux
+export WHATSUP_PAIR_PHONE="18005551234"   # digits, your own WhatsApp number
 ```
 
-Scan with the phone: **WhatsApp → Settings → Linked Devices → Link a Device**.
+### Option B — QR scan (fallback)
 
-Credentials persist to `~/.config/whatsup/auth/` (0700 dir, 0600 files). Subsequent starts skip the QR.
+On first start the server also writes a QR to `/tmp/whatsup-qr.png` and pushes its path as a system notification:
+
+```bash
+# In Claude, ask: "what's the whatsup status?" → returns qrCodeFile when pairing is pending.
+open /tmp/whatsup-qr.png   # macOS   (xdg-open on Linux)
+```
+
+Scan with **WhatsApp → Settings → Linked Devices → Link a Device**.
+
+Credentials persist to `~/.config/whatsup/auth/` (0700 dir, 0600 files). Subsequent starts skip pairing.
+
+### Optional — stay reachable when the link dies (out-of-band alerts)
+
+If the link ever deauths, the server can't tell you over WhatsApp. Point it at a secondary channel so it can:
+
+```bash
+export WHATSUP_ALERT_WEBHOOK_URL="https://…"   # Pushover / ntfy / Slack / email relay / phone push
+export WHATSUP_AUTO_REPAIR="true"              # optional: auto-issue a pairing code on deauth and push it here
+```
+
+Deauth, pairing-code, replaced, and reconnect-gave-up events then POST to that URL, and the `alert` tool lets Claude reach you there directly.
 
 ## Step 3: Configure the allowlist
 
@@ -64,21 +86,27 @@ The `reply` tool fires, the message lands on WhatsApp. Then have that contact re
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `status` returns `qrCodeFile` and `connected: false` | Pairing not completed | Scan the QR; if expired, restart Claude Code to regenerate. |
+| `status` returns `qrCodeFile` / `pairingCode` and `connected: false` | Pairing not completed | Enter the `pairingCode` (or scan the QR); call `pair_request` for a fresh code if it expired. |
+| `REPAIR_REQUIRED` / `status.needsRepair` / `replacedCode: 401` | Link deauthed or taken over via a 401 auth conflict | **Don't** `reconnect` (risks a wipe). Call `restore_credentials`; if it fails, `pair_request` to re-link. |
 | `CONTACT_NOT_ALLOWLISTED` on `reply` | Number not in allowlist | Add to `WHATSUP_ALLOWLIST`; restart Claude Code. |
 | Inbound messages don't arrive | `readMode: allowlist` and sender not on allowlist | Add the contact, or set `WHATSUP_READ_MODE=all` if you want every DM. |
-| Server log says `disconnected, statusCode: 401` | Phone unlinked the device | Delete `~/.config/whatsup/auth/` and re-pair. |
+| Server log says `disconnected, statusCode: 401` | Phone unlinked the device (genuine deauth) | Call `restore_credentials` (if spurious) or `pair_request` to re-link. Credentials are backed up to `auth.bak.*`, not deleted. |
+| `ALERT_NOT_CONFIGURED` on `alert` | No secondary channel set | Set `WHATSUP_ALERT_WEBHOOK_URL`. |
 | `MEDIA_TOO_LARGE` on `reply` with files | File > 64 MB default | Compress or lower `WHATSUP_MAX_MEDIA_SIZE`. |
 
 Logs: `/tmp/whatsup-proxy.log` (default `logFile`). Audit log: `~/.config/whatsup/audit.jsonl`.
 
 ## Re-pairing
 
+Preferred (no host access, no QR): ask Claude to call `pair_request` and enter the returned code on your phone. `pair_request` moves any existing credentials aside into `auth.bak.*` first, so a mistaken re-pair is recoverable with `restore_credentials`.
+
+Manual reset (removes creds without a backup):
+
 ```bash
 rm -rf ~/.config/whatsup/auth/
 ```
 
-Then restart Claude Code — the server emits a fresh QR notification.
+Then restart Claude Code — the server emits a fresh pairing notification.
 
 ## Config sources, in priority order
 
@@ -87,4 +115,4 @@ Then restart Claude Code — the server emits a fresh QR notification.
 3. Repo config (`.claude/whatsup.json` — security-narrowed)
 4. Defaults
 
-`authDir`, `logFile`, `auditLog`, `qrCodeFile` are locked from repo config — only env vars or user config can set them. Repo config can never *widen* `allowlist` / `allowlistGroups` beyond what user config permits (intersection only), and can never *raise* rate limits.
+`authDir`, `logFile`, `auditLog`, `qrCodeFile`, `historyFile`, `daemonSocketFile`, and the sensitive `alertWebhookUrl` / `pairPhone` / `autoRepair` are locked from repo config — only env vars or user config can set them (so a malicious repo can't redirect alerts, aim pairing at a foreign number, or silently enable auto-repair). Repo config can never *widen* `allowlist` / `allowlistGroups` beyond what user config permits (intersection only), and can never *raise* rate limits.

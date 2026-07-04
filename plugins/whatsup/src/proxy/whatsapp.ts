@@ -14,16 +14,53 @@ import makeWASocket, {
 } from "baileys";
 import type { Boom } from "@hapi/boom";
 import pino from "pino";
+import { hostname } from "os";
 import type {
   WhatsUpConfig,
   ConnectionStatus,
   StoredMessage,
 } from "../shared/types.js";
 import { MessageStore } from "./message-store.js";
-import { initAuthState, saveQrCode, cleanupQrCode, backupCredentials, type AuthState } from "./auth.js";
+import {
+  initAuthState,
+  saveQrCode,
+  cleanupQrCode,
+  backupCredentials,
+  restoreCredentials,
+  hasCredentials,
+  type AuthState,
+} from "./auth.js";
 import { getGlobalLogger, audit } from "./logger.js";
 
 // ---- WhatsApp Connection Manager ----
+
+/**
+ * Lifecycle event surfaced to the broker so it can (a) push a system channel
+ * notification and (b) fire the out-of-band alerter. This is how a dying
+ * WhatsApp link tells the operator how to revive it (P0-#2 / P1-#5).
+ */
+export interface SystemEvent {
+  kind:
+    | "qr"
+    | "pairing_code"
+    | "connected"
+    | "recovered"
+    | "replaced"
+    | "deauth"
+    | "reconnect_gave_up";
+  content: string;
+  /** When true, also deliver out-of-band via the secondary channel. */
+  alert?: boolean;
+  data?: Record<string, unknown>;
+}
+
+// After a user-initiated reconnect we refuse to auto-wipe credentials on a
+// 401 for this long — that wipe (authDir -> authDir.bak) is exactly the
+// cascade the post-mortem hit. Within the window we preserve creds in place
+// and flag needsRepair instead.
+const RECONNECT_GRACE_MS = 20_000;
+// Best-effort pairing-code validity shown to the operator.
+const PAIRING_CODE_TTL_MS = 180_000;
 
 export class WhatsAppManager {
   private sock: WASocket | null = null;
@@ -35,6 +72,14 @@ export class WhatsAppManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private qrHandler?: (qr: string) => void;
   private messageHandler?: (msg: StoredMessage) => void;
+  private systemHandler?: (evt: SystemEvent) => void;
+  // Phone-number pairing (P0-#1): when set, the next `qr` event issues a
+  // pairing code for this number instead of a QR PNG.
+  private pendingPairPhone: string | null = null;
+  private pairingRequested = false;
+  // Suppress the destructive 401 credential wipe until this timestamp (set on
+  // every user-initiated forceReconnect). See RECONNECT_GRACE_MS.
+  private reconnectGraceUntil = 0;
   private contacts: Map<string, Contact> = new Map();
   private chats: Map<string, Chat> = new Map();
   private lidToPhone: Map<string, string> = new Map(); // LID JID → phone JID
@@ -60,11 +105,13 @@ export class WhatsAppManager {
   async connect(options?: {
     onQr?: (qr: string) => void;
     onMessage?: (msg: StoredMessage) => void;
+    onSystem?: (evt: SystemEvent) => void;
   }): Promise<ConnectionStatus> {
     const logger = getGlobalLogger();
 
     this.qrHandler = options?.onQr;
     this.messageHandler = options?.onMessage;
+    this.systemHandler = options?.onSystem;
     audit("connection_attempt", {});
 
     // 1. Initialize auth state
@@ -85,7 +132,11 @@ export class WhatsAppManager {
     // 3. Create a silent pino logger to suppress Baileys internal logging
     const baileysLogger = pino({ level: "silent" }) as any;
 
-    // 4. Create WASocket
+    // 4. Create WASocket.
+    // browser[1] stays "Chrome" so Baileys' getPlatformId() keeps working for
+    // the pairing-code flow; the host name rides in browser[0] so a conflicting
+    // linked-device shows which host holds the link (P1-#6 / P2-#9).
+    const hostShort = hostname().split(".")[0].slice(0, 24);
     this.sock = makeWASocket({
       auth: {
         creds: this.authState.state.creds,
@@ -93,7 +144,7 @@ export class WhatsAppManager {
       },
       printQRInTerminal: false,
       logger: baileysLogger,
-      browser: ["WhatsUp", "Chrome", "1.0"],
+      browser: [`WhatsUp@${hostShort}`, "Chrome", "1.0"],
       generateHighQualityLinkPreview: true,
       ...(version ? { version } : {}),
     });
@@ -144,6 +195,15 @@ export class WhatsAppManager {
    */
   getStatus(): ConnectionStatus {
     return { ...this.connectionStatus };
+  }
+
+  /**
+   * Test-only: merge fields into the live connection status so recovery paths
+   * (reconnect guard, needsRepair) can be exercised without a real socket.
+   * Only reachable via the WHATSUP_TEST_INJECT-gated broker hook.
+   */
+  __setTestStatus(partial: Partial<ConnectionStatus>): void {
+    Object.assign(this.connectionStatus, partial);
   }
 
   /**
@@ -275,9 +335,153 @@ export class WhatsAppManager {
     this.connectionStatus.reconnectScheduled = false;
     this.connectionStatus.reconnectGaveUp = false;
     this.connectionStatus.replacedByOtherInstance = false;
+    this.connectionStatus.replacedCode = undefined;
     this.connectionStatus.connected = false;
 
-    return this.connect({ onQr: this.qrHandler, onMessage: this.messageHandler });
+    // Open the no-wipe grace window: if this reconnect closes with a 401, we
+    // preserve credentials in place (needsRepair) rather than renaming them
+    // aside. This is the direct fix for the post-mortem's deauth cascade.
+    this.reconnectGraceUntil = Date.now() + RECONNECT_GRACE_MS;
+
+    return this.connect({
+      onQr: this.qrHandler,
+      onMessage: this.messageHandler,
+      onSystem: this.systemHandler,
+    });
+  }
+
+  /**
+   * Begin a phone-number pairing (P0-#1). Moves any existing credentials aside
+   * (recoverable via restore_credentials), then brings up a fresh unregistered
+   * socket; the next `qr` event issues an 8-char pairing code for `phone`
+   * instead of a QR PNG. Returns the backup path if creds were moved.
+   */
+  async startPairing(phone: string): Promise<{ backedUp: string | null }> {
+    const digits = phone.replace(/[^\d]/g, "");
+    if (!digits) throw new Error("A phone number (digits) is required to pair");
+
+    let backedUp: string | null = null;
+    // Pairing requires an UNREGISTERED auth dir, or Baileys resumes the old
+    // session and never emits a fresh pairing challenge.
+    if (hasCredentials(this.config.authDir)) {
+      backedUp = await backupCredentials(this.config.authDir);
+    }
+
+    this.pendingPairPhone = digits;
+    this.pairingRequested = false;
+    this.connectionStatus.pairingCode = undefined;
+    this.connectionStatus.pairingCodeExpiresAt = undefined;
+    this.connectionStatus.pairingPhone = digits;
+    this.connectionStatus.needsRepair = true;
+    audit("pairing_started", { phone: digits, backedUp });
+
+    await this.forceReconnect();
+    return { backedUp };
+  }
+
+  /**
+   * Restore the most recent credential backup and reconnect (P1-#4).
+   * Returns the restored backup path, or null if there was nothing to restore.
+   */
+  async restoreAndReconnect(): Promise<string | null> {
+    const restored = await restoreCredentials(this.config.authDir);
+    if (!restored) return null;
+    this.connectionStatus.needsRepair = false;
+    this.connectionStatus.deauthRisk = undefined;
+    await this.forceReconnect();
+    return restored;
+  }
+
+  /** Emit a lifecycle event to the broker (system push + optional alert). */
+  private emitSystem(evt: SystemEvent): void {
+    if (!this.systemHandler) return;
+    try {
+      this.systemHandler(evt);
+    } catch {
+      /* handler errors must never break the connection lifecycle */
+    }
+  }
+
+  /** Operator-facing instructions used on any deauth. */
+  private repairInstructions(code: number | string): string {
+    const phone = this.config.pairPhone;
+    return [
+      `WhatsApp link lost (disconnect ${code}). This channel is down.`,
+      ``,
+      `From this host, choose one:`,
+      `  • restore_credentials — self-heals a spurious drop from the newest backup.`,
+      phone
+        ? `  • pair_request — issues a phone pairing code (delivered here + to your alert channel).`
+        : `  • pair_request({ phone: "<your number, digits>" }) — issues a phone pairing code.`,
+      ``,
+      `Enter the code in WhatsApp → Settings → Linked Devices → Link a Device →`,
+      `"Link with phone number instead".`,
+    ].join("\n");
+  }
+
+  /**
+   * Handle a credential-invalidating disconnect (genuine logout, or a 401
+   * inside the reconnect grace window). Never lets a user-initiated reconnect
+   * silently wipe creds; auto-repairs only when explicitly enabled.
+   */
+  private async onDeauth(opts: {
+    code: number | string;
+    reason: string;
+    preserveInPlace: boolean;
+  }): Promise<void> {
+    const logger = getGlobalLogger();
+    this.connectionStatus.authenticated = false;
+    this.connectionStatus.phone = undefined;
+    this.connectionStatus.pushName = undefined;
+    this.connectionStatus.needsRepair = true;
+    this.connectionStatus.reconnectScheduled = false;
+
+    const autoRepair = this.config.autoRepair && !!this.config.pairPhone;
+
+    // Back up (clearing the live dir) when auto-repairing (a fresh pairing
+    // needs an unregistered dir) or on a genuine logout (defense in depth).
+    // Preserve-in-place only when asked AND not auto-repairing — that keeps
+    // restore_credentials a no-op rename.
+    let backupPath: string | null = null;
+    if (autoRepair || !opts.preserveInPlace) {
+      try {
+        backupPath = await backupCredentials(this.config.authDir);
+      } catch (err: any) {
+        logger.error("Failed to back up credentials on deauth", { error: err?.message });
+      }
+    }
+
+    audit("deauth", {
+      code: opts.code,
+      reason: opts.reason,
+      preserveInPlace: opts.preserveInPlace,
+      autoRepair,
+      backupPath,
+    });
+
+    if (autoRepair) {
+      this.connectionStatus.deauthRisk = "auto-repair in progress — pairing code incoming";
+      this.emitSystem({
+        kind: "deauth",
+        alert: true,
+        content: `WhatsApp link lost (${opts.code}). Auto-repair is enabled — issuing a new pairing code…`,
+        data: { code: opts.code, reason: opts.reason, backupPath },
+      });
+      this.startPairing(this.config.pairPhone).catch((err: any) =>
+        logger.error("Auto-repair pairing failed", { error: err?.message })
+      );
+      return;
+    }
+
+    this.connectionStatus.deauthRisk = opts.preserveInPlace
+      ? "credentials preserved in place — call restore_credentials or pair_request"
+      : `credentials backed up${backupPath ? ` to ${backupPath}` : ""} — call restore_credentials or pair_request`;
+    this.emitSystem({
+      kind: "deauth",
+      alert: true,
+      content: this.repairInstructions(opts.code),
+      data: { code: opts.code, reason: opts.reason, backupPath },
+    });
   }
 
   /**
@@ -359,17 +563,77 @@ export class WhatsAppManager {
     ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
-      // QR code received -- needs scanning
+      // QR / pairing challenge received. The `qr` event fires exactly when the
+      // websocket is open and the account is unregistered — the correct moment
+      // to request a phone pairing code (P0-#1). If a pair is pending, issue a
+      // code and skip the GUI-bound QR PNG entirely.
       if (qr) {
+        if (this.pendingPairPhone && !this.pairingRequested && this.sock) {
+          this.pairingRequested = true;
+          const digits = this.pendingPairPhone;
+          try {
+            const raw = await this.sock.requestPairingCode(digits);
+            const code =
+              raw.length === 8 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+            this.connectionStatus.pairingCode = code;
+            this.connectionStatus.pairingPhone = digits;
+            this.connectionStatus.pairingCodeExpiresAt = Date.now() + PAIRING_CODE_TTL_MS;
+            logger.info("Pairing code issued", { phone: digits });
+            audit("pairing_code_issued", { phone: digits });
+            this.emitSystem({
+              kind: "pairing_code",
+              alert: true,
+              content: [
+                `WhatsApp pairing code: ${code}`,
+                ``,
+                `On the phone for +${digits}: WhatsApp → Settings → Linked Devices →`,
+                `Link a Device → "Link with phone number instead" → enter the code.`,
+                `Expires in ~${Math.round(PAIRING_CODE_TTL_MS / 60000)} min; check with pair_status.`,
+              ].join("\n"),
+              data: { code, phone: digits },
+            });
+          } catch (err: any) {
+            // Fall back to QR so the operator is never left with nothing.
+            this.pairingRequested = false;
+            this.pendingPairPhone = null;
+            logger.error("requestPairingCode failed — falling back to QR", {
+              error: err?.message,
+            });
+            try {
+              await saveQrCode(qr, this.config.qrCodeFile);
+            } catch {
+              /* ignore */
+            }
+            this.emitSystem({
+              kind: "qr",
+              alert: true,
+              content: `Pairing-code request failed (${err?.message ?? "unknown"}). Fell back to QR: ${this.config.qrCodeFile}`,
+              data: { qrCodeFile: this.config.qrCodeFile },
+            });
+          }
+          return;
+        }
+
         logger.info("QR code received, scan to authenticate");
         audit("qr_received", {});
 
-        // Save QR code to file
         try {
           await saveQrCode(qr, this.config.qrCodeFile);
         } catch (err: any) {
           logger.error("Failed to save QR code file", { error: err?.message });
         }
+
+        this.emitSystem({
+          kind: "qr",
+          alert: true,
+          content: [
+            `WhatsApp pairing required. QR written to ${this.config.qrCodeFile}.`,
+            this.config.pairPhone
+              ? `No GUI? Call pair_request for a phone pairing code instead.`
+              : `No GUI? Call pair_request({ phone: "<your number>" }) for a code instead.`,
+          ].join("\n"),
+          data: { qrCodeFile: this.config.qrCodeFile },
+        });
 
         // Invoke the callback so callers can handle QR display
         if (this.qrHandler) {
@@ -383,6 +647,14 @@ export class WhatsAppManager {
 
       // Connection opened
       if (connection === "open") {
+        // Was the link previously in any degraded/down state? Drives whether
+        // we emit a "recovered" alert vs a first-time "connected" event.
+        const wasDown =
+          !!this.connectionStatus.needsRepair ||
+          !!this.connectionStatus.replacedByOtherInstance ||
+          !!this.connectionStatus.reconnectGaveUp ||
+          this.connectionStatus.lastDisconnected != null;
+
         this.connectionStatus.connected = true;
         this.connectionStatus.authenticated = true;
         this.connectionStatus.lastConnected = Date.now();
@@ -390,7 +662,18 @@ export class WhatsAppManager {
         this.connectionStatus.reconnectScheduled = false;
         this.connectionStatus.reconnectGaveUp = false;
         this.connectionStatus.replacedByOtherInstance = false;
+        this.connectionStatus.replacedCode = undefined;
+        this.connectionStatus.needsRepair = false;
+        this.connectionStatus.deauthRisk = undefined;
         this.reconnectAttempts = 0;
+        this.reconnectGraceUntil = 0;
+
+        // Pairing (if any) completed — clear the pending code state.
+        this.pendingPairPhone = null;
+        this.pairingRequested = false;
+        this.connectionStatus.pairingCode = undefined;
+        this.connectionStatus.pairingCodeExpiresAt = undefined;
+        this.connectionStatus.pairingPhone = undefined;
 
         // Extract user info from the socket
         if (this.sock?.user) {
@@ -411,6 +694,15 @@ export class WhatsAppManager {
         audit("connection_open", {
           phone: this.connectionStatus.phone,
           pushName: this.connectionStatus.pushName,
+        });
+
+        this.emitSystem({
+          kind: wasDown ? "recovered" : "connected",
+          alert: wasDown,
+          content: wasDown
+            ? `WhatsApp link recovered — connected as ${this.connectionStatus.phone ?? "unknown"}.`
+            : `WhatsApp connected as ${this.connectionStatus.phone ?? "unknown"}.`,
+          data: { phone: this.connectionStatus.phone },
         });
       }
 
@@ -437,17 +729,26 @@ export class WhatsAppManager {
           // different events:
           //   (a) genuine user-initiated unlink from the phone -- terminal.
           //   (b) server-side session conflict / sibling-device displacement
-          //       -- often spurious and recoverable via `reconnect`.
+          //       -- often spurious and recoverable.
           // Case (b) shows up as "Stream Errored (conflict)" or similar
-          // "replaced" wording. Route those through the connectionReplaced
-          // path (creds preserved) instead of the destructive backup path.
+          // "replaced" wording. Neither case wipes creds here anymore —
+          // (b) yields to the external session; (a) routes through onDeauth,
+          // which never wipes during a user-initiated reconnect grace window.
           const conflictLike = /conflict|replaced/i.test(errorMessage);
+          const inReconnectGrace = Date.now() < this.reconnectGraceUntil;
 
           if (conflictLike) {
+            // Recoverable takeover. Creds are preserved; do NOT reconnect
+            // automatically (it can ping-pong or, worse, tip into a real 401
+            // that wipes). Surface the deauth risk so the reconnect tool and
+            // status stop nudging toward a dangerous retake.
             this.connectionStatus.replacedByOtherInstance = true;
+            this.connectionStatus.replacedCode = 401;
             this.connectionStatus.reconnectScheduled = false;
+            this.connectionStatus.deauthRisk =
+              "link taken over with a 401 auth conflict — reconnecting risks a full deauth; re-pair (pair_request) or wait it out";
             logger.warn(
-              "401 with conflict-like reason — treating as connectionReplaced (creds preserved). Call reconnect to retake socket.",
+              "401 conflict — external takeover; NOT auto-reconnecting (reconnect is unsafe here)",
               { statusCode, error: errorMessage }
             );
             audit("connection_replaced_external", {
@@ -455,48 +756,54 @@ export class WhatsAppManager {
               error: errorMessage,
               reclassifiedFrom: "loggedOut",
             });
+            this.emitSystem({
+              kind: "replaced",
+              alert: true,
+              content:
+                "WhatsApp link taken over by another session (401 conflict). Not auto-reconnecting — reconnecting can trigger a full deauth. Re-pair with pair_request if it doesn't recover on its own.",
+              data: { code: 401, reason: errorMessage },
+            });
           } else {
-            // Unambiguous loggedOut (no "conflict"/"replaced" signature) --
-            // most plausibly a genuine user unlink. Still BACK UP rather
-            // than delete: `backupCredentials` atomically renames
-            // authDir -> authDir.bak.<ts>, which both preserves the files
-            // and clears the live auth dir in one step (so no subsequent
-            // clearCredentials call is needed). Defense in depth in case
-            // even this path turns out to be spurious.
-            logger.warn("Logged out from WhatsApp (401), backing up credentials");
-            audit("logged_out", {});
-
-            this.connectionStatus.authenticated = false;
-            this.connectionStatus.phone = undefined;
-            this.connectionStatus.pushName = undefined;
-
-            try {
-              const backupPath = await backupCredentials(this.config.authDir);
-              if (backupPath) {
-                logger.warn(
-                  "Auth credentials preserved -- restore by renaming back to authDir if 401 was spurious",
-                  { backupPath }
-                );
-                this.connectionStatus.lastDisconnectReason =
-                  `${errorMessage} -- auth backed up to ${backupPath}`;
-              }
-            } catch (err: any) {
-              logger.error("Failed to back up credentials after logout", { error: err?.message });
+            // Genuine logout. onDeauth handles it safely: during a reconnect
+            // grace window we PRESERVE creds in place (the post-mortem's
+            // cascade fix); otherwise we back up (defense in depth). Either
+            // way we flag needsRepair and push re-pair instructions.
+            if (inReconnectGrace) {
+              logger.warn(
+                "401 during reconnect grace window — preserving credentials in place (no wipe)",
+                { statusCode, error: errorMessage }
+              );
+            } else {
+              logger.warn("Logged out from WhatsApp (401)", { error: errorMessage });
+              audit("logged_out", {});
             }
+            await this.onDeauth({
+              code: statusCode,
+              reason: errorMessage,
+              preserveInPlace: inReconnectGrace,
+            });
           }
         } else if (statusCode === DisconnectReason.connectionReplaced) {
           // 440 connectionReplaced: this process is the sole owner of the
           // WhatsApp socket, so the replacer is an EXTERNAL WhatsApp Web /
           // phone / linked-device session. Auto-reconnecting would just
           // ping-pong with that external session, so we yield and surface a
-          // distinct status. The reconnect tool (forceReconnect) clears this
-          // flag to retake the socket.
+          // distinct status. Unlike the 401 case, a 440 retake does NOT risk
+          // a credential wipe, so reconnect stays allowed here.
           this.connectionStatus.replacedByOtherInstance = true;
+          this.connectionStatus.replacedCode = 440;
           this.connectionStatus.reconnectScheduled = false;
           logger.warn(
             "Connection replaced by another session (440) — not auto-reconnecting"
           );
-          audit("connection_replaced_external", {});
+          audit("connection_replaced_external", { statusCode: 440 });
+          this.emitSystem({
+            kind: "replaced",
+            alert: true,
+            content:
+              "WhatsApp connection replaced by another session (440). Safe to retake: call reconnect.",
+            data: { code: 440, reason: errorMessage },
+          });
         } else if (this.config.autoReconnect) {
           // Attempt reconnect for ordinary disconnects (network blips, 515
           // restartRequired, etc.)
@@ -643,6 +950,15 @@ export class WhatsAppManager {
         }
       }
 
+      // Record backfill stats so status/health can show that history synced
+      // after a re-pair/reconnect (P1-#7).
+      this.connectionStatus.lastHistorySync = {
+        at: Date.now(),
+        chats: histChats.length,
+        contacts: histContacts.length,
+        messages: histMessages.length,
+      };
+
       logger.info("History sync received", {
         chats: histChats.length,
         contacts: histContacts.length,
@@ -668,6 +984,12 @@ export class WhatsAppManager {
       this.connectionStatus.reconnectScheduled = false;
       this.connectionStatus.reconnectGaveUp = true;
       audit("reconnect_failed", { attempts: this.reconnectAttempts });
+      this.emitSystem({
+        kind: "reconnect_gave_up",
+        alert: true,
+        content: `WhatsApp reconnect gave up after ${this.reconnectAttempts} attempts. Call reconnect to retry, or restore_credentials / pair_request if the link is gone.`,
+        data: { attempts: this.reconnectAttempts, lastReason: this.connectionStatus.lastDisconnectReason },
+      });
       return;
     }
 
@@ -689,7 +1011,11 @@ export class WhatsAppManager {
       this.reconnectTimer = null;
       try {
         logger.info("Reconnecting to WhatsApp...", { attempt: this.reconnectAttempts });
-        await this.connect({ onQr: this.qrHandler, onMessage: this.messageHandler });
+        await this.connect({
+          onQr: this.qrHandler,
+          onMessage: this.messageHandler,
+          onSystem: this.systemHandler,
+        });
       } catch (err: any) {
         logger.error("Reconnect failed", {
           attempt: this.reconnectAttempts,

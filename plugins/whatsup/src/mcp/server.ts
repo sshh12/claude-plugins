@@ -23,9 +23,13 @@ const SERVER_INSTRUCTIONS = [
   "",
   "One background-resident session owns the single WhatsApp connection; every other session proxies to it transparently, so multiple agents can run concurrently without conflict.",
   "",
-  "On session start, call the `status` tool once to verify the connection and surface any pending QR pairing. If the device is not yet paired, status returns a qrCodeFile path; tell the user to scan it (WhatsApp → Settings → Linked Devices → Link a Device).",
+  "On session start, call the `status` tool once to verify the connection and surface any pending pairing. If the device is not paired, prefer `pair_request` — it returns an 8-character phone pairing code the user enters under WhatsApp → Settings → Linked Devices → Link a Device → \"Link with phone number instead\". No QR image or GUI is needed. (A QR file is still written to qrCodeFile as a fallback.)",
+  "",
+  "Recovery: if status shows needsRepair or replacedByOtherInstance with replacedCode=401, do NOT call `reconnect` — it can trigger a full credential deauth. Call `restore_credentials` first (self-heals a spurious drop), and `pair_request` if that fails. `reconnect` is only for ordinary drops and 440 replacedCode.",
   "",
   "If this agent is the one handling WhatsApp, call `subscribe` after `status` — live inbound messages are delivered only to subscribed sessions. Then call `unreplied` to catch up on messages that arrived between sessions.",
+  "",
+  "`health` gives a one-call send/receive/auth check. `alert` reaches the operator over a secondary, WhatsApp-independent webhook — use it when WhatsApp itself is down instead of shelling out.",
   "",
   "When inbound meta has `attachment_file_id`, call `download_attachment` with that id to fetch the media to disk, then Read the returned path.",
 ].join("\n");
@@ -37,7 +41,7 @@ async function main(): Promise<void> {
   audit("mcp_start", { pid: process.pid });
 
   const mcp = new Server(
-    { name: "whatsup", version: "0.4.0" },
+    { name: "whatsup", version: "0.5.0" },
     {
       capabilities: { tools: {}, experimental: { "claude/channel": {} } },
       instructions: SERVER_INSTRUCTIONS,

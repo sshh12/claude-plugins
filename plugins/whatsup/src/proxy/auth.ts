@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync, chmodSync, statSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
 import { useMultiFileAuthState } from "baileys";
 import QRCode from "qrcode";
 import type { WhatsUpConfig } from "../shared/types.js";
@@ -146,6 +146,100 @@ export async function backupCredentials(authDir: string): Promise<string | null>
     logger.error("Failed to back up auth credentials", { authDir, error: err?.message });
     throw err;
   }
+}
+
+/**
+ * List credential backups produced by backupCredentials(), newest first.
+ * A backup is any sibling directory named `${authDir}.bak.<unixMillis>`.
+ */
+export function listCredentialBackups(authDir: string): Array<{ path: string; ts: number }> {
+  try {
+    const dir = dirname(authDir);
+    const base = authDir.slice(dir.length + 1); // basename of authDir
+    const prefix = `${base}.bak.`;
+    const entries = readdirSync(dir);
+    const backups: Array<{ path: string; ts: number }> = [];
+    for (const name of entries) {
+      if (!name.startsWith(prefix)) continue;
+      const tsPart = name.slice(prefix.length);
+      const ts = parseInt(tsPart, 10);
+      if (isNaN(ts)) continue;
+      const full = join(dir, name);
+      try {
+        if (!statSync(full).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      backups.push({ path: full, ts });
+    }
+    return backups.sort((a, b) => b.ts - a.ts);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Restore the most recent credential backup back into authDir.
+ *
+ * Self-heals a spurious deauth (P1-#4): backupCredentials() renamed the live
+ * auth dir aside, so `hasCredentials` reads false and the operator would
+ * otherwise need a fresh QR/pairing. This renames the newest backup back into
+ * place — but only when the live dir is absent or empty, so we never clobber
+ * good credentials.
+ *
+ * Returns the restored backup path, or null if there was nothing to restore.
+ * Throws only on an unexpected filesystem error mid-rename.
+ */
+export async function restoreCredentials(authDir: string): Promise<string | null> {
+  const logger = getGlobalLogger();
+
+  // Refuse if live creds are already present — restoring would clobber them.
+  if (hasCredentials(authDir)) {
+    logger.info("Live credentials present, refusing to restore over them", { authDir });
+    return null;
+  }
+
+  const backups = listCredentialBackups(authDir);
+  if (backups.length === 0) {
+    logger.info("No credential backups to restore", { authDir });
+    return null;
+  }
+
+  const newest = backups[0];
+
+  // Clear an empty/partial live dir so the rename target is free.
+  try {
+    if (existsSync(authDir)) {
+      const files = readdirSync(authDir);
+      if (files.length > 0) {
+        logger.warn("Auth dir non-empty but lacks creds.json — clearing before restore", {
+          authDir,
+          files: files.length,
+        });
+      }
+      for (const f of files) {
+        try {
+          unlinkSync(join(authDir, f));
+        } catch {
+          /* ignore */
+        }
+      }
+      renameSync(authDir, `${authDir}.stale.${Date.now()}`);
+    }
+  } catch {
+    /* best effort — proceed to rename backup in */
+  }
+
+  renameSync(newest.path, authDir);
+  enforceAuthPermissions(authDir);
+
+  logger.warn("Restored auth credentials from backup", {
+    authDir,
+    restoredFrom: newest.path,
+  });
+  audit("auth_credentials_restored", { authDir, restoredFrom: newest.path });
+
+  return newest.path;
 }
 
 /**

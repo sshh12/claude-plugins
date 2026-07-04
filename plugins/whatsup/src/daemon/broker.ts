@@ -12,7 +12,8 @@ import type { ApiResponse, WhatsUpConfig, StoredMessage } from "../shared/types.
 import { ErrorCode } from "../shared/types.js";
 import type { Logger } from "../proxy/logger.js";
 import { setAuditLog, audit } from "../proxy/logger.js";
-import { WhatsAppManager } from "../proxy/whatsapp.js";
+import { WhatsAppManager, type SystemEvent } from "../proxy/whatsapp.js";
+import { Alerter } from "../proxy/alerter.js";
 import { MessageStore } from "../proxy/message-store.js";
 import { RateLimiter } from "../proxy/rate-limiter.js";
 import {
@@ -79,6 +80,10 @@ export async function startBroker(opts: {
 }): Promise<Broker> {
   const { mcp, logger } = opts;
   const config = getConfig();
+  // Secondary, WhatsApp-independent alert channel (webhook). Constructed once;
+  // used by the `alert` tool and fired from WhatsApp lifecycle events so a
+  // dying link can still reach the operator.
+  const alerter = new Alerter(config);
   if (config.auditLog) setAuditLog(config.auditLog);
   for (const w of getSecurityWarnings()) {
     logger.warn(`Config warning: ${w.field} - ${w.message}`);
@@ -137,12 +142,17 @@ export async function startBroker(opts: {
       if (msg && msg.id) onInbound(msg);
       return { ok: true };
     }
+    if (name === "__test_set_status" && process.env.WHATSUP_TEST_INJECT) {
+      wa!.__setTestStatus(args?.status ?? {});
+      return { ok: true };
+    }
     const effective = conn ? conn.effective : config;
     const ctx: ToolCtx = {
       wa: wa!,
       config: effective,
       messageStore: messageStore!,
       rateLimiter: rateLimiter!,
+      alerter,
       daemonInfo,
     };
     try {
@@ -259,28 +269,24 @@ export async function startBroker(opts: {
     });
     ipcServer = server;
 
-    let announcedReady = false;
-    const readyTimer = setInterval(() => {
-      if (announcedReady || !wa) return;
-      if (wa.isReady()) {
-        announcedReady = true;
-        onSystem(`WhatsApp connected as ${wa.getStatus().phone ?? "unknown"}. Ready.`);
+    // Lifecycle events (QR/pairing-code/connected/deauth/replaced/gave-up) are
+    // pushed to subscribed sessions as a system message and, when flagged,
+    // delivered out-of-band via the alerter — so a dying WhatsApp link can
+    // still tell the operator how to revive it.
+    const onLifecycle = (evt: SystemEvent) => {
+      onSystem(evt.content);
+      if (evt.alert) {
+        alerter
+          .send({ kind: evt.kind, text: evt.content, data: evt.data })
+          .catch((err: any) =>
+            logger.warn("Alert delivery threw", { error: err?.message ?? String(err) })
+          );
       }
-    }, 2000);
-    readyTimer.unref();
+    };
 
     wa.connect({
-      onQr: () =>
-        onSystem(
-          [
-            `WhatsApp pairing required. QR written to:`,
-            `  ${config.qrCodeFile}`,
-            ``,
-            `Scan: WhatsApp → Settings → Linked Devices → Link a Device.`,
-            `On macOS: \`open ${config.qrCodeFile}\``,
-          ].join("\n")
-        ),
       onMessage: (msg) => onInbound(msg),
+      onSystem: onLifecycle,
     }).catch((err) =>
       logger.error("Initial WhatsApp connect failed", {
         error: err instanceof Error ? err.message : String(err),

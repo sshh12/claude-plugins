@@ -8,7 +8,8 @@ import type { WhatsAppManager } from "../proxy/whatsapp.js";
 import type { MessageStore } from "../proxy/message-store.js";
 import type { RateLimiter } from "../proxy/rate-limiter.js";
 import { enforceWriteAllowlist, phoneToJid } from "../proxy/allowlist.js";
-import { hasCredentials } from "../proxy/auth.js";
+import { hasCredentials, listCredentialBackups } from "../proxy/auth.js";
+import type { Alerter } from "../proxy/alerter.js";
 import { audit, getGlobalLogger } from "../proxy/logger.js";
 import { handleSend } from "../proxy/handlers/send.js";
 import { handleSendMedia } from "../proxy/handlers/send-media.js";
@@ -37,6 +38,9 @@ export interface ToolCtx {
   config: WhatsUpConfig;
   messageStore: MessageStore;
   rateLimiter: RateLimiter;
+  // Secondary, WhatsApp-independent out-of-band channel (for the `alert` tool
+  // and status/health reporting of whether it's configured).
+  alerter: Alerter;
   // The broker daemon builds one ToolCtx per request; this surfaces the
   // daemon's own pid/uptime for the `status` tool.
   daemonInfo: () => { pid: number; uptimeSec: number };
@@ -115,14 +119,66 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "status",
     description:
-      "Get WhatsApp connection state. Returns connected, authenticated, phone, pushName, the QR file path if pairing is pending, reconnect diagnostics (lastDisconnectReason, reconnectAttempts, reconnectScheduled, reconnectGaveUp), the shared broker daemon's pid/uptime (daemonPid, daemonUptimeSec), and replacedByOtherInstance (true when an external WhatsApp Web/phone session took the socket; call reconnect to retake it).",
+      "Get WhatsApp connection state. Returns connected, authenticated, phone, pushName, hasCredentials, the QR file path if pairing is pending, any pending pairingCode, reconnect diagnostics (lastDisconnectReason, reconnectAttempts, reconnectScheduled, reconnectGaveUp), needsRepair + deauthRisk (a re-pair is required; reconnect is unsafe), replacedByOtherInstance + replacedCode (401 = do NOT reconnect, 440 = safe retake), lastHistorySync, alertChannelConfigured, and the shared broker daemon's pid/uptime.",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "reconnect",
     description:
-      "Force a fresh WhatsApp socket connection. Use when status shows connected=false but authenticated=true, or when reconnectGaveUp=true after sustained network trouble.",
+      "Force a fresh WhatsApp socket. Safe for ordinary drops (connected=false, authenticated=true) and 440 connectionReplaced. REFUSES by default when the link was taken over with a 401 auth conflict (replacedByOtherInstance with replacedCode=401) — reconnecting there can trigger a full credential deauth. Re-pair with pair_request instead, or pass force=true to override.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        force: {
+          type: "boolean",
+          description: "Override the 401-conflict refusal. Reconnecting in that state risks wiping credentials.",
+        },
+      },
+    },
+  },
+  {
+    name: "pair_request",
+    description:
+      "Link this device to WhatsApp with an 8-character phone pairing code — no QR, no GUI. Issues a code for your own WhatsApp number; enter it on the phone under WhatsApp → Settings → Linked Devices → Link a Device → \"Link with phone number instead\". If WHATSUP_PAIR_PHONE is set, phone is optional and locked to that number. Moves any existing credentials aside (recoverable via restore_credentials).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        phone: {
+          type: "string",
+          description: "Your WhatsApp number in digits/E.164 (e.g. 18005551234). Optional when WHATSUP_PAIR_PHONE is configured.",
+        },
+      },
+    },
+  },
+  {
+    name: "pair_status",
+    description:
+      "Check an in-progress phone pairing: returns the current pairingCode (if any), whether credentials now exist, and connection state. Poll after pair_request until connected=true.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "restore_credentials",
+    description:
+      "Self-heal a spurious deauth: restore the most recent credential backup and reconnect. No-op if live credentials are already present. Try this before pair_request when a drop may have been spurious.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "health",
+    description:
+      "One-call send-path + receive-path + auth health check. Reports overall health, ready/connected/authenticated, credential + pairing state, last inbound/outbound activity, last history sync, buffered message count, and whether the out-of-band alert channel is configured. Read-only — sends no message.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "alert",
+    description:
+      "Send a message to the operator over the secondary, WhatsApp-independent channel (the configured alert webhook). Use to reach the operator when WhatsApp itself is down, instead of shelling out to say/osascript. Fails with ALERT_NOT_CONFIGURED if no webhook is set.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Message to deliver out-of-band." },
+      },
+      required: ["text"],
+    },
   },
   {
     name: "unreplied",
@@ -218,14 +274,36 @@ function checkDisabled(commandName: string, config: WhatsUpConfig): ApiResponse 
 function checkConnected(wa: WhatsAppManager): ApiResponse | null {
   if (wa.isReady()) return null;
   const status = wa.getStatus();
-  // Differentiate "never paired" from "paired but socket dropped" so Claude
-  // and the user can act on the right thing.
+  // Differentiate "never paired" from "paired but socket dropped" from
+  // "needs a deliberate re-pair" so Claude and the user act on the right thing.
   if (!status.authenticated) {
     return {
       ok: false,
       error: "WhatsApp not paired",
       code: ErrorCode.NOT_AUTHENTICATED,
-      hint: "Call the status tool to retrieve the QR file path, then pair under WhatsApp → Settings → Linked Devices.",
+      hint: "Call pair_request for a phone pairing code (no QR/GUI needed), or status for the QR file path.",
+    };
+  }
+  // Dangerous 401 takeover: do NOT nudge toward reconnect (that's what wiped
+  // creds in the incident).
+  if (status.replacedByOtherInstance && status.replacedCode === 401) {
+    return {
+      ok: false,
+      error: "WhatsApp link was taken over with a 401 auth conflict",
+      code: ErrorCode.REPAIR_REQUIRED,
+      hint:
+        status.deauthRisk ??
+        "Do not reconnect (it risks a full deauth). Re-pair with pair_request, or wait for it to recover.",
+    };
+  }
+  if (status.needsRepair) {
+    return {
+      ok: false,
+      error: "WhatsApp link needs re-pairing",
+      code: ErrorCode.REPAIR_REQUIRED,
+      hint:
+        status.deauthRisk ??
+        "Call restore_credentials (self-heals a spurious drop) or pair_request (phone pairing code).",
     };
   }
   if (status.reconnectGaveUp) {
@@ -233,7 +311,7 @@ function checkConnected(wa: WhatsAppManager): ApiResponse | null {
       ok: false,
       error: "WhatsApp socket disconnected and reconnect gave up",
       code: ErrorCode.NOT_CONNECTED,
-      hint: "Call the reconnect tool. If that fails, the phone may have unlinked the device — re-pair via status.",
+      hint: "Call reconnect. If it stays down, the device may be unlinked — restore_credentials or pair_request.",
     };
   }
   return {
@@ -328,7 +406,17 @@ export async function callTool(
     case "status":
       return callStatus(ctx);
     case "reconnect":
-      return callReconnect(ctx);
+      return callReconnect(ctx, args);
+    case "pair_request":
+      return callPairRequest(ctx, args);
+    case "pair_status":
+      return callPairStatus(ctx);
+    case "restore_credentials":
+      return callRestore(ctx);
+    case "health":
+      return callHealth(ctx);
+    case "alert":
+      return callAlert(ctx, args);
     case "unreplied":
       return callUnreplied(ctx, args);
     case "list_chats":
@@ -553,19 +641,31 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
   const creds = hasCredentials(ctx.config.authDir);
   const ready = ctx.wa.isReady();
 
-  // Pick a one-line diagnostic for Claude to relay to the user.
+  // Pick a one-line diagnostic for Claude to relay to the user. Order matters:
+  // a pending pairing code and the dangerous 401-takeover case come first so
+  // we never nudge toward a reconnect that could wipe credentials.
   let diagnosis: string;
-  if (status.replacedByOtherInstance) {
-    diagnosis =
-      "another session/instance replaced this connection — not auto-reconnecting; call the reconnect tool to retake it";
+  if (status.pairingCode) {
+    diagnosis = `pairing code issued (${status.pairingCode}) — enter it on your phone under Linked Devices → Link with phone number`;
   } else if (ready) {
     diagnosis = "connected and ready";
   } else if (!creds) {
-    diagnosis = "no credentials — pair the device by scanning the QR file";
+    diagnosis =
+      "no credentials — call pair_request for a phone pairing code (no QR/GUI), or scan the QR file";
+  } else if (status.replacedByOtherInstance) {
+    diagnosis =
+      status.replacedCode === 401
+        ? "link taken over via a 401 auth conflict — do NOT reconnect (risks a full deauth); re-pair with pair_request or wait it out"
+        : "another session replaced this connection (440) — safe to retake with reconnect";
+  } else if (status.needsRepair) {
+    diagnosis =
+      status.deauthRisk ??
+      "needs re-pair — call restore_credentials (spurious drop) or pair_request";
   } else if (!status.authenticated) {
-    diagnosis = "credentials present but never connected this session — waiting on initial socket open";
+    diagnosis =
+      "credentials present but not connected this session — waiting on initial socket open";
   } else if (status.reconnectGaveUp) {
-    diagnosis = `reconnect gave up after ${status.reconnectAttempts ?? 0} attempts — call the reconnect tool`;
+    diagnosis = `reconnect gave up after ${status.reconnectAttempts ?? 0} attempts — call reconnect, or restore_credentials/pair_request if the link is gone`;
   } else if (status.reconnectScheduled) {
     diagnosis = `reconnecting (attempt ${status.reconnectAttempts ?? 0}) — last disconnect: ${status.lastDisconnectReason ?? "unknown"}`;
   } else if (status.connected === false && status.authenticated === true) {
@@ -586,6 +686,11 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
     pushName: status.pushName,
     hasCredentials: creds,
     qrCodeFile: creds ? undefined : ctx.config.qrCodeFile,
+    pairingCode: status.pairingCode,
+    pairingPhone: status.pairingPhone,
+    pairingCodeExpiresAt: status.pairingCodeExpiresAt,
+    needsRepair: status.needsRepair ?? false,
+    deauthRisk: status.deauthRisk,
     lastConnected: status.lastConnected,
     lastDisconnected: status.lastDisconnected,
     lastDisconnectCode: status.lastDisconnectCode,
@@ -594,6 +699,10 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
     reconnectScheduled: status.reconnectScheduled ?? false,
     reconnectGaveUp: status.reconnectGaveUp ?? false,
     replacedByOtherInstance: status.replacedByOtherInstance ?? false,
+    replacedCode: status.replacedCode,
+    lastHistorySync: status.lastHistorySync,
+    alertChannelConfigured: ctx.alerter.isConfigured(),
+    autoRepairEnabled: ctx.config.autoRepair && !!ctx.config.pairPhone,
     daemonPid: daemon.pid,
     daemonUptimeSec: daemon.uptimeSec,
     allowlist: ctx.config.allowlist,
@@ -602,15 +711,35 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
   };
 }
 
-async function callReconnect(ctx: ToolCtx): Promise<ApiResponse> {
+async function callReconnect(ctx: ToolCtx, args: any): Promise<ApiResponse> {
   if (!hasCredentials(ctx.config.authDir)) {
     return {
       ok: false,
       error: "No credentials — pair the device first",
       code: ErrorCode.NOT_AUTHENTICATED,
-      hint: "Call status to retrieve the QR file path.",
+      hint: "Call pair_request for a phone pairing code (no QR/GUI), or restore_credentials if a backup exists.",
     };
   }
+
+  const status = ctx.wa.getStatus();
+  const force = args?.force === true;
+
+  // The root-cause guard: refuse to reconnect when the link was taken over
+  // with a 401 auth conflict. That is exactly the state where forceReconnect
+  // cascaded into a full credential deauth in the incident. 440 retakes and
+  // ordinary drops are unaffected.
+  if (status.replacedByOtherInstance && status.replacedCode === 401 && !force) {
+    audit("reconnect_refused", { reason: "replaced_401" });
+    return {
+      ok: false,
+      error:
+        "Reconnect refused: the link was taken over with a 401 auth conflict. Reconnecting here can trigger a full credential deauth.",
+      code: ErrorCode.REPAIR_REQUIRED,
+      hint: "Wait for it to recover, re-pair with pair_request (no QR needed), or pass force=true to attempt a retake anyway (risks wiping credentials).",
+      deauthRisk: status.deauthRisk,
+    };
+  }
+
   try {
     await ctx.wa.forceReconnect();
     // forceReconnect resolves once the socket is created; the open event is
@@ -618,6 +747,7 @@ async function callReconnect(ctx: ToolCtx): Promise<ApiResponse> {
     return {
       ok: true,
       message: "Reconnect initiated. Call status in a few seconds to confirm.",
+      forced: force,
       status: ctx.wa.getStatus(),
     };
   } catch (err: any) {
@@ -627,6 +757,245 @@ async function callReconnect(ctx: ToolCtx): Promise<ApiResponse> {
       code: ErrorCode.SOCKET_ERROR,
     };
   }
+}
+
+// ---- Pairing / recovery / health / alert ----
+
+/** Poll the manager for a freshly-issued pairing code (issued on the qr event). */
+async function waitForPairingCode(
+  wa: WhatsAppManager,
+  timeoutMs: number
+): Promise<string | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const s = wa.getStatus();
+    if (s.pairingCode) return s.pairingCode;
+    if (s.connected && s.authenticated) return undefined; // already paired
+    if (Date.now() >= deadline) return wa.getStatus().pairingCode;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+}
+
+async function callPairRequest(ctx: ToolCtx, args: any): Promise<ApiResponse> {
+  const disabled = checkDisabled("pair_request", ctx.config);
+  if (disabled) return disabled;
+
+  const configured = (ctx.config.pairPhone ?? "").replace(/[^\d]/g, "");
+  const argPhone = args?.phone ? String(args.phone).replace(/[^\d]/g, "") : "";
+
+  // Security: a configured pairPhone locks the flow to the operator's own
+  // number so a prompt-injected channel message can't aim it elsewhere.
+  let phone: string;
+  if (configured) {
+    if (argPhone && argPhone !== configured) {
+      return {
+        ok: false,
+        error:
+          "pair_request is locked to the configured WHATSUP_PAIR_PHONE — refusing to pair a different number.",
+        code: ErrorCode.INVALID_ARGUMENT,
+      };
+    }
+    phone = configured;
+  } else if (argPhone) {
+    phone = argPhone;
+  } else {
+    return {
+      ok: false,
+      error: "No phone number — set WHATSUP_PAIR_PHONE or pass phone (digits/E.164).",
+      code: ErrorCode.INVALID_ARGUMENT,
+    };
+  }
+
+  if (ctx.wa.isReady()) {
+    return {
+      ok: false,
+      error: "Already connected and paired — no need to pair. Use reconnect if the socket drops.",
+      code: ErrorCode.INVALID_ARGUMENT,
+      status: ctx.wa.getStatus(),
+    };
+  }
+
+  audit("pair_request", { phone });
+  try {
+    const { backedUp } = await ctx.wa.startPairing(phone);
+    const code = await waitForPairingCode(ctx.wa, 12_000);
+    if (code) {
+      return {
+        ok: true,
+        pairingCode: code,
+        phone,
+        backedUp,
+        hint: `Enter ${code} in WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead". Then poll pair_status until connected=true.`,
+      };
+    }
+    return {
+      ok: true,
+      pairingCode: undefined,
+      phone,
+      backedUp,
+      message: "Pairing started but no code yet — call pair_status shortly.",
+      hint: "If no code appears within ~30s, check the whatsup log; the number may be invalid.",
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: `Pairing failed: ${err?.message ?? String(err)}`,
+      code: ErrorCode.PAIRING_FAILED,
+    };
+  }
+}
+
+async function callPairStatus(ctx: ToolCtx): Promise<ApiResponse> {
+  const s = ctx.wa.getStatus();
+  const creds = hasCredentials(ctx.config.authDir);
+  const ready = ctx.wa.isReady();
+  return {
+    ok: true,
+    ready,
+    connected: s.connected,
+    authenticated: s.authenticated,
+    hasCredentials: creds,
+    pairingCode: s.pairingCode,
+    pairingPhone: s.pairingPhone,
+    pairingCodeExpiresAt: s.pairingCodeExpiresAt,
+    needsRepair: s.needsRepair ?? false,
+    diagnosis: ready
+      ? "paired and connected"
+      : s.pairingCode
+        ? "code issued — enter it on your phone under Linked Devices → Link with phone number"
+        : creds
+          ? "credentials present — connecting"
+          : "no code yet — call pair_request",
+  };
+}
+
+async function callRestore(ctx: ToolCtx): Promise<ApiResponse> {
+  const disabled = checkDisabled("restore_credentials", ctx.config);
+  if (disabled) return disabled;
+
+  if (hasCredentials(ctx.config.authDir)) {
+    return {
+      ok: false,
+      error: "Live credentials already present — nothing to restore.",
+      code: ErrorCode.INVALID_ARGUMENT,
+      hint: "If the socket is just down, call reconnect instead.",
+    };
+  }
+  const backups = listCredentialBackups(ctx.config.authDir);
+  if (backups.length === 0) {
+    return {
+      ok: false,
+      error: "No credential backups found to restore.",
+      code: ErrorCode.FILE_NOT_FOUND,
+      hint: "Re-pair with pair_request.",
+    };
+  }
+  try {
+    const restored = await ctx.wa.restoreAndReconnect();
+    if (!restored) {
+      return {
+        ok: false,
+        error: "Restore found no usable backup.",
+        code: ErrorCode.FILE_NOT_FOUND,
+      };
+    }
+    return {
+      ok: true,
+      restoredFrom: restored,
+      availableBackups: backups.length,
+      message: "Credentials restored; reconnecting. Call status in a few seconds to confirm.",
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: `Restore failed: ${err?.message ?? String(err)}`,
+      code: ErrorCode.SOCKET_ERROR,
+    };
+  }
+}
+
+async function callHealth(ctx: ToolCtx): Promise<ApiResponse> {
+  const s = ctx.wa.getStatus();
+  const ready = ctx.wa.isReady();
+  const creds = hasCredentials(ctx.config.authDir);
+  const stats = ctx.messageStore.getStats();
+
+  // Last inbound/outbound activity from the in-memory buffer.
+  const all = ctx.messageStore.query({ limit: 1000 });
+  let lastInbound: number | undefined;
+  let lastOutbound: number | undefined;
+  for (const m of all) {
+    if (m.isFromMe) {
+      if (!lastOutbound || m.timestamp > lastOutbound) lastOutbound = m.timestamp;
+    } else if (!lastInbound || m.timestamp > lastInbound) {
+      lastInbound = m.timestamp;
+    }
+  }
+
+  const sendPath = ready ? "ok" : creds ? "down" : "unpaired";
+  const receivePath = ready ? "ok" : "down";
+  const authHealth = ready
+    ? "ok"
+    : creds
+      ? s.needsRepair
+        ? "needs_repair"
+        : "disconnected"
+      : "unpaired";
+
+  return {
+    ok: true,
+    overall: ready ? "healthy" : "degraded",
+    sendPath,
+    receivePath,
+    authHealth,
+    ready,
+    connected: s.connected,
+    authenticated: s.authenticated,
+    hasCredentials: creds,
+    needsRepair: s.needsRepair ?? false,
+    deauthRisk: s.deauthRisk,
+    replacedByOtherInstance: s.replacedByOtherInstance ?? false,
+    pairingPending: !!s.pairingCode,
+    lastConnected: s.lastConnected,
+    lastDisconnected: s.lastDisconnected,
+    lastDisconnectReason: s.lastDisconnectReason,
+    lastInbound,
+    lastOutbound,
+    lastHistorySync: s.lastHistorySync,
+    bufferedMessages: stats.size,
+    credentialBackups: listCredentialBackups(ctx.config.authDir).length,
+    alertChannelConfigured: ctx.alerter.isConfigured(),
+    autoRepairEnabled: ctx.config.autoRepair && !!ctx.config.pairPhone,
+  };
+}
+
+async function callAlert(ctx: ToolCtx, args: any): Promise<ApiResponse> {
+  const disabled = checkDisabled("alert", ctx.config);
+  if (disabled) return disabled;
+
+  const text = String(args?.text ?? "").trim();
+  if (!text) {
+    return { ok: false, error: "text is required", code: ErrorCode.INVALID_ARGUMENT };
+  }
+  if (!ctx.alerter.isConfigured()) {
+    return {
+      ok: false,
+      error: "No secondary alert channel configured.",
+      code: ErrorCode.ALERT_NOT_CONFIGURED,
+      hint: "Set WHATSUP_ALERT_WEBHOOK_URL (env or ~/.config/whatsup/config.json).",
+    };
+  }
+  const delivered = await ctx.alerter.send({ kind: "manual", text });
+  if (delivered) {
+    audit("alert_manual", { chars: text.length });
+    return { ok: true, delivered: true };
+  }
+  return {
+    ok: false,
+    error: "Alert delivery failed.",
+    code: ErrorCode.SEND_FAILED,
+    hint: "Check the webhook URL and the whatsup log.",
+  };
 }
 
 async function callUnreplied(ctx: ToolCtx, args: any): Promise<ApiResponse> {

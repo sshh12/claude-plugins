@@ -19,6 +19,9 @@ export enum ErrorCode {
   TIMEOUT = "TIMEOUT",
   FILE_NOT_FOUND = "FILE_NOT_FOUND",
   DAEMON_UNREACHABLE = "DAEMON_UNREACHABLE",
+  PAIRING_FAILED = "PAIRING_FAILED",
+  REPAIR_REQUIRED = "REPAIR_REQUIRED",
+  ALERT_NOT_CONFIGURED = "ALERT_NOT_CONFIGURED",
 }
 
 // ---- API Response ----
@@ -53,6 +56,16 @@ export interface WhatsUpConfig {
   historyRetentionDays: number;  // prune entries older than this on startup
   historyLoadLimit: number;      // how many recent entries to load into the in-memory buffer
   daemonSocketFile: string;      // Unix socket the in-process owner listens on
+  // Secondary, WhatsApp-independent channel for out-of-band alerts (deauth,
+  // pairing code, replaced, reconnect-gave-up). Empty = disabled.
+  alertWebhookUrl: string;
+  // The operator's own WhatsApp number (digits, no +) used by the pairing-code
+  // re-pair flow. Locks pair_request to this number so a prompt-injected
+  // channel message cannot aim it. Empty = must be passed explicitly.
+  pairPhone: string;
+  // When true, a genuine deauth auto-issues a pairing code and pushes it to the
+  // alert channel (requires pairPhone). Off by default — pairing is sensitive.
+  autoRepair: boolean;
 }
 
 // Config entry with source tracking
@@ -125,6 +138,25 @@ export interface ConnectionStatus {
   // phone session took the socket from the owner. We deliberately do NOT
   // auto-reconnect (it would ping-pong); the reconnect tool clears this.
   replacedByOtherInstance?: boolean;
+  // The disconnect code that put us into the replaced state (401 = auth-level
+  // conflict, dangerous to reconnect; 440 = plain connectionReplaced, safe to
+  // retake). Lets the reconnect tool refuse only the dangerous case.
+  replacedCode?: number | string;
+  // True once we're in a state that needs a deliberate re-pair (genuine
+  // deauth, or a 401 during a reconnect grace window). While set, `reconnect`
+  // is unsafe — the operator should re-pair (pair_request) or restore.
+  needsRepair?: boolean;
+  // Human-facing risk note when reconnect could trigger a credential wipe.
+  deauthRisk?: string;
+  // Pending phone-number pairing code (P0-#1). Present only between
+  // pair_request and successful pairing; cleared on connection open.
+  pairingCode?: string;
+  pairingCodeExpiresAt?: number;
+  // The number pairing is currently being requested for (digits, no +).
+  pairingPhone?: string;
+  // Stats from the most recent messaging-history.set sync (backfill on
+  // re-pair / reconnect). Lets `health`/`status` show that history synced.
+  lastHistorySync?: { at: number; chats: number; contacts: number; messages: number };
 }
 
 // ---- Security Warnings ----

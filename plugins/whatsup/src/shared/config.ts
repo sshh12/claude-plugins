@@ -30,6 +30,9 @@ const DEFAULTS: WhatsUpConfig = {
   historyRetentionDays: 90,
   historyLoadLimit: 5000,
   daemonSocketFile: join(homedir(), ".config", "whatsup", "daemon.sock"),
+  alertWebhookUrl: "",
+  pairPhone: "",
+  autoRepair: false,
 };
 
 // ---- Config File Shape ----
@@ -53,6 +56,9 @@ interface ConfigFile {
   historyRetentionDays?: number;
   historyLoadLimit?: number;
   daemonSocketFile?: string;
+  alertWebhookUrl?: string;
+  pairPhone?: string;
+  autoRepair?: boolean;
 }
 
 /**
@@ -66,6 +72,12 @@ const LOCKED_FROM_REPO: ReadonlySet<keyof ConfigFile> = new Set([
   "qrCodeFile",
   "historyFile",
   "daemonSocketFile",
+  // Sensitive: a malicious repo config must not be able to redirect alerts to
+  // an attacker URL, aim the pairing flow at a foreign number, or silently
+  // enable auto-repair. Env var or user config only.
+  "alertWebhookUrl",
+  "pairPhone",
+  "autoRepair",
 ]);
 
 /** Security warnings accumulated during the last resolveConfig() call. */
@@ -147,6 +159,30 @@ function resolveLockedString(
   defaultVal: string
 ): ResolvedConfigEntry<string> {
   if (envVar !== undefined && envVar !== "") return entry(envVar, "env");
+  if (repoVal !== undefined) {
+    securityWarnings.push({
+      field,
+      message: `Repo config for "${field}" ignored — this field can only be set via env var or user config`,
+    });
+  }
+  if (userVal !== undefined) return entry(userVal, "user");
+  return entry(defaultVal, "default");
+}
+
+/**
+ * Resolve a boolean field that is locked from repo config.
+ * Repo values are silently ignored and a security warning is emitted.
+ */
+function resolveLockedBoolean(
+  field: string,
+  envVar: string | undefined,
+  repoVal: boolean | undefined,
+  userVal: boolean | undefined,
+  defaultVal: boolean
+): ResolvedConfigEntry<boolean> {
+  if (envVar !== undefined && envVar !== "") {
+    return entry(envVar === "true" || envVar === "1", "env");
+  }
   if (repoVal !== undefined) {
     securityWarnings.push({
       field,
@@ -492,6 +528,27 @@ export function resolveConfig(cwd?: string): ResolvedConfig {
       repoConfig?.daemonSocketFile,
       userConfig?.daemonSocketFile,
       DEFAULTS.daemonSocketFile
+    ),
+    alertWebhookUrl: resolveLockedString(
+      "alertWebhookUrl",
+      env.WHATSUP_ALERT_WEBHOOK_URL,
+      repoConfig?.alertWebhookUrl,
+      userConfig?.alertWebhookUrl,
+      DEFAULTS.alertWebhookUrl
+    ),
+    pairPhone: resolveLockedString(
+      "pairPhone",
+      env.WHATSUP_PAIR_PHONE,
+      repoConfig?.pairPhone,
+      userConfig?.pairPhone,
+      DEFAULTS.pairPhone
+    ),
+    autoRepair: resolveLockedBoolean(
+      "autoRepair",
+      env.WHATSUP_AUTO_REPAIR,
+      repoConfig?.autoRepair,
+      userConfig?.autoRepair,
+      DEFAULTS.autoRepair
     ),
   };
 }
