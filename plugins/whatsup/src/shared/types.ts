@@ -154,6 +154,15 @@ export interface ConnectionStatus {
   pairingCodeExpiresAt?: number;
   // The number pairing is currently being requested for (digits, no +).
   pairingPhone?: string;
+  // Reason the last pairing attempt was rejected by WhatsApp (e.g. the 401
+  // "Connection Failure"). Distinct from a lost-link deauth.
+  lastPairError?: string;
+  // WA-web version actually in use ("x.y.z (fetched|bundled)") — a stale
+  // version is a common cause of a pairing/registration 401.
+  waVersion?: string;
+  // When the on-disk QR PNG was last (re)written. Lets callers judge whether
+  // the QR is still fresh (WhatsApp rotates it every ~20s).
+  qrGeneratedAt?: number;
   // Stats from the most recent messaging-history.set sync (backfill on
   // re-pair / reconnect). Lets `health`/`status` show that history synced.
   lastHistorySync?: { at: number; chats: number; contacts: number; messages: number };

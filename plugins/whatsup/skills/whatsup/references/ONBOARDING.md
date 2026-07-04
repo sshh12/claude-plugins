@@ -30,14 +30,14 @@ export WHATSUP_PAIR_PHONE="18005551234"   # digits, your own WhatsApp number
 
 ### Option B — QR scan (fallback)
 
-On first start the server also writes a QR to `/tmp/whatsup-qr.png` and pushes its path as a system notification:
+If the phone code is rejected (status shows `lastPairError` / a repeated `401`), ask Claude to call **`qr_request`** — it brings up a fresh, rotating QR (the plain startup QR goes stale because WhatsApp stops rotating it once a code is requested). Then:
 
 ```bash
-# In Claude, ask: "what's the whatsup status?" → returns qrCodeFile when pairing is pending.
+# In Claude, ask: "what's the whatsup status?" → returns qrCodeFile + qrAgeSec.
 open /tmp/whatsup-qr.png   # macOS   (xdg-open on Linux)
 ```
 
-Scan with **WhatsApp → Settings → Linked Devices → Link a Device**.
+Scan with **WhatsApp → Settings → Linked Devices → Link a Device**. If pairing is stuck in a failure loop, `reset_credentials` gets you back to a clean slate (safe — a completed session is backed up, never destroyed).
 
 Credentials persist to `~/.config/whatsup/auth/` (0700 dir, 0600 files). Subsequent starts skip pairing.
 
@@ -87,6 +87,7 @@ The `reply` tool fires, the message lands on WhatsApp. Then have that contact re
 | Symptom | Cause | Fix |
 |---|---|---|
 | `status` returns `qrCodeFile` / `pairingCode` and `connected: false` | Pairing not completed | Enter the `pairingCode` (or scan the QR); call `pair_request` for a fresh code if it expired. |
+| Phone code keeps ending in `401` / `PAIRING_FAILED` / `lastPairError` set | WhatsApp rejected the pairing (often a stale WA client version) | Retry `pair_request` for a fresh code, or `qr_request` to scan a QR; `reset_credentials` if looping. Note the `waVersion` from `status` and update the plugin if it's stale. |
 | `REPAIR_REQUIRED` / `status.needsRepair` / `replacedCode: 401` | Link deauthed or taken over via a 401 auth conflict | **Don't** `reconnect` (risks a wipe). Call `restore_credentials`; if it fails, `pair_request` to re-link. |
 | `CONTACT_NOT_ALLOWLISTED` on `reply` | Number not in allowlist | Add to `WHATSUP_ALLOWLIST`; restart Claude Code. |
 | Inbound messages don't arrive | `readMode: allowlist` and sender not on allowlist | Add the contact, or set `WHATSUP_READ_MODE=all` if you want every DM. |

@@ -4,10 +4,11 @@ description: >-
   In-context guidance for the `whatsup` MCP server. WhatsApp messages arrive
   as channel notifications and Claude replies via MCP tools (reply, react,
   edit_message, download_attachment, status, reconnect, pair_request,
-  pair_status, restore_credentials, health, alert, unreplied, list_chats,
-  read_chat, search, contacts). Loads when the user asks to send, read, or
-  respond to WhatsApp messages, to pair/re-pair or reconnect the link, or when
-  an inbound WhatsApp channel notification needs handling.
+  pair_status, qr_request, restore_credentials, reset_credentials, health,
+  alert, unreplied, list_chats, read_chat, search, contacts). Loads when the
+  user asks to send, read, or respond to WhatsApp messages, to pair/re-pair or
+  reconnect the link, or when an inbound WhatsApp channel notification needs
+  handling.
 ---
 
 # whatsup — WhatsApp messaging over MCP
@@ -25,7 +26,7 @@ whatsup is an MCP server that bridges Claude Code to a personal WhatsApp account
 ## Session start
 
 1. Call `status` — confirms connection state and surfaces recovery diagnostics.
-2. If `hasCredentials: false`, pair the device. Prefer `pair_request` — it returns an 8-character phone pairing code the user enters under **WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead"**. No QR image or GUI needed (a QR file is still written to `qrCodeFile` as a fallback). Do not proceed until status shows `connected: true, authenticated: true`.
+2. If `hasCredentials: false`, pair the device. Prefer `pair_request` — it returns an 8-character phone pairing code the user enters under **WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead"**. No QR image or GUI needed. If the code is rejected (status shows `lastPairError` / a repeated `401`), call `qr_request` for a fresh, rotating QR to scan instead, and `reset_credentials` if pairing is stuck in a loop. If it keeps failing, relay `waVersion` — a stale WhatsApp client version is a common cause. Do not proceed until status shows `connected: true, authenticated: true`.
 3. If this agent handles WhatsApp, call `subscribe` — live inbound messages are delivered only to subscribed sessions (it survives owner handoff).
 4. Call `unreplied` — catches up on messages that arrived before this session.
 
@@ -49,9 +50,11 @@ If the whole channel is down and you must reach the operator, use `alert` (deliv
 | `download_attachment` | Fetch an inbound media attachment to disk by `file_id` (== inbound `message_id`). Returns a local path; Read it afterwards. |
 | `status` | Connection state, phone, pushName, allowlist summary, qrCodeFile / pending `pairingCode`, recovery flags (`needsRepair`, `deauthRisk`, `replacedByOtherInstance`, `replacedCode`), reconnect diagnostics (`diagnosis`, `reconnectAttempts`, `reconnectScheduled`, `reconnectGaveUp`, `lastDisconnectReason`), `lastHistorySync`, `alertChannelConfigured`, and this session's `role` (`owner`/`proxy`) + `ownerPid`. |
 | `reconnect` | Force a fresh WhatsApp socket. Optional `force`. Safe for ordinary drops and `replacedCode: 440`. **Refuses** `replacedCode: 401` (deauth risk) unless `force: true`. |
-| `pair_request` | Link the device with an 8-char phone pairing code (no QR/GUI). Optional `phone` (locked to `WHATSUP_PAIR_PHONE` when set). Returns `pairingCode`. |
-| `pair_status` | Poll an in-progress pairing: current `pairingCode`, `hasCredentials`, connection state. |
+| `pair_request` | Link the device with an 8-char phone pairing code (no QR/GUI). Optional `phone` (locked to `WHATSUP_PAIR_PHONE` when set). Returns `pairingCode`; on rejection returns `PAIRING_FAILED` + `lastPairError` + `waVersion`. |
+| `pair_status` | Poll an in-progress pairing: current `pairingCode`, `hasCredentials`, connection state, `lastPairError`. |
+| `qr_request` | Fallback when phone-code pairing fails: bring up a fresh, **rotating** QR at `qrCodeFile` (WhatsApp stops rotating the QR once a code is requested). |
 | `restore_credentials` | Self-heal a spurious deauth from the newest credential backup, then reconnect. No-op if creds already present. |
+| `reset_credentials` | Clean slate for pairing: back up a completed session / delete half-finished leftovers, then a fresh unregistered socket. No deauth risk. Use when pairing is stuck in a failure loop. |
 | `health` | One-call send-path + receive-path + auth health. Read-only; sends nothing. |
 | `alert` | Send `text` to the operator over the secondary WhatsApp-independent webhook. Fails `ALERT_NOT_CONFIGURED` if no webhook is set. |
 | `subscribe` / `unsubscribe` | Opt this session in/out of live inbound message delivery. Idempotent; the intent survives owner handoff. |
@@ -76,7 +79,7 @@ If the whole channel is down and you must reach the operator, use `alert` (deliv
 | `NOT_AUTHENTICATED` | Device not paired (no credentials) | Call `pair_request` for a phone pairing code (no QR/GUI), or `restore_credentials` if a backup exists. |
 | `REPAIR_REQUIRED` | Link deauthed / taken over via 401 — reconnect is unsafe | Call `restore_credentials` (spurious drop) then `pair_request`. Do not blindly `reconnect`. |
 | `NOT_CONNECTED` | Paired but socket is currently down | Read the hint — if reconnect is in flight, wait; otherwise call the `reconnect` tool. |
-| `PAIRING_FAILED` | `pair_request` couldn't issue a code | Check the number and log; retry `pair_request`. |
+| `PAIRING_FAILED` | Pairing rejected by WhatsApp (see `lastPairError`) | Retry `pair_request` for a fresh code, or `qr_request` to scan a QR; `reset_credentials` if looping. Relay `waVersion` — a stale version is a common cause. |
 | `ALERT_NOT_CONFIGURED` | `alert` called but no webhook set | Tell the user to set `WHATSUP_ALERT_WEBHOOK_URL`. |
 | `DAEMON_UNREACHABLE` | The session that owns the WhatsApp socket vanished and re-election didn't settle | Retry the call (re-election is lazy and self-heals). If it persists, check the whatsup log. |
 | `CONTACT_NOT_ALLOWLISTED` | Target phone not in `WHATSUP_ALLOWLIST` | Tell user; ask them to add the number out-of-band. |

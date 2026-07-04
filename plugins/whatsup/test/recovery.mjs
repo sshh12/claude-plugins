@@ -165,7 +165,15 @@ async function main() {
   console.log("\n# 1 — tool surface");
   const tools = await c.listTools();
   const names = new Set(tools.map((t) => t.name));
-  for (const n of ["pair_request", "pair_status", "restore_credentials", "health", "alert"]) {
+  for (const n of [
+    "pair_request",
+    "pair_status",
+    "qr_request",
+    "restore_credentials",
+    "reset_credentials",
+    "health",
+    "alert",
+  ]) {
     check(names.has(n), `tool "${n}" is advertised`);
   }
   const reconnectDef = tools.find((t) => t.name === "reconnect");
@@ -252,6 +260,32 @@ async function main() {
   check(
     mismatch.ok === false && mismatch.code === "INVALID_ARGUMENT",
     "pair_request refuses a number other than WHATSUP_PAIR_PHONE"
+  );
+
+  // ---- 7: clean-slate reset + QR regeneration + diagnostics ----
+  console.log("\n# 7 — reset_credentials, qr_request, diagnostics");
+  // Seed unregistered leftovers (like a half-finished pairing) — reset must
+  // CLEAR (not back up) these, avoiding auth.bak churn.
+  writeFileSync(CREDS, JSON.stringify({ me: { id: "x" }, registered: false }));
+  const reset = await c.call("reset_credentials");
+  check(reset.ok === true, `reset_credentials ok (got ${reset.error ?? "ok"})`);
+  check(
+    reset.cleared === true && reset.backedUp === null,
+    "reset cleared unregistered leftovers instead of backing them up (no churn)"
+  );
+  const qr = await c.call("qr_request");
+  check(qr.ok === true, `qr_request ok (got ${qr.error ?? "ok"})`);
+  check(qr.qrCodeFile === ENV.WHATSUP_QR_CODE_FILE, "qr_request reports the qrCodeFile path");
+  const st7 = await c.call("status");
+  check("waVersion" in st7, "status exposes waVersion diagnostic");
+  check("qrAgeSec" in st7, "status exposes qrAgeSec freshness field");
+  // Inject a pairing rejection and confirm pair_status surfaces it (a real
+  // 401 pairing failure sets lastPairError without setting needsRepair).
+  await c.call("__test_set_status", { status: { lastPairError: "Connection Failure (401)" } });
+  const ps7 = await c.call("pair_status");
+  check(
+    ps7.lastPairError === "Connection Failure (401)",
+    `pair_status surfaces lastPairError (got ${ps7.lastPairError})`
   );
 
   c.kill();

@@ -49,8 +49,8 @@ Inbound + outbound messages are persisted as JSONL at `~/.config/whatsup/message
 
 Two ways to link the device:
 
-- **Phone pairing code (no QR, no GUI — recommended for headless hosts).** Call the `pair_request` tool (optionally set `WHATSUP_PAIR_PHONE` to your own number so it needs no argument and can't be aimed elsewhere). It returns an 8-character code; enter it on the phone under **WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead"**.
-- **QR scan (fallback).** On first start the server also writes a QR to `/tmp/whatsup-qr.png` and emits a system channel notification with the path. Open the file and scan with **Link a Device**.
+- **Phone pairing code (no QR, no GUI — recommended for headless hosts).** Call the `pair_request` tool (optionally set `WHATSUP_PAIR_PHONE` to your own number so it needs no argument and can't be aimed elsewhere). It returns an 8-character code; enter it on the phone under **WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead"**. If a code is rejected (`PAIRING_FAILED` / `lastPairError`), retry for a fresh code, or fall back to `qr_request`; `reset_credentials` clears a stuck loop.
+- **QR scan (fallback).** `qr_request` brings up a fresh, **rotating** QR at `qrCodeFile` (needed because WhatsApp stops rotating the QR once a pairing code is requested). On first start the server also writes a QR there and pushes its path. Open the file and scan with **Link a Device**; `status` reports `qrAgeSec` so you can tell it's still fresh.
 
 Either way, the server reports `connected: true` via the `status` tool and credentials persist to `~/.config/whatsup/auth/` (0700/0600).
 
@@ -59,7 +59,8 @@ Either way, the server reports `connected: true` via the `status` tool and crede
 A dying WhatsApp link is the one thing WhatsApp itself can't tell you about, so the server has a WhatsApp-independent path and a guarded recovery flow:
 
 - **`reconnect` is guarded.** It refuses to reconnect when the link was taken over with a **401 auth conflict** (`status.replacedCode: 401`) — that path could cascade into a full credential deauth — unless you pass `force: true`. A user-initiated reconnect never silently wipes credentials; a 401 during the reconnect window preserves them in place and sets `needsRepair`. Plain 440 replacements stay safe to retake.
-- **`restore_credentials`** self-heals a spurious deauth by restoring the newest `auth.bak.*` backup and reconnecting — no re-pair needed.
+- **`restore_credentials`** self-heals a spurious deauth by restoring the newest `auth.bak.*` backup and reconnecting — no re-pair needed. **`reset_credentials`** does the inverse — a clean slate for re-pairing (backs up a real session, deletes half-finished pairing leftovers) with no deauth risk.
+- **Pairing failures are not deauths.** A `401` while a pairing is in progress is surfaced as `lastPairError` (not `needsRepair`), the half-written creds are cleared so the next attempt is clean (no `auth.bak` churn), and `status`/`health` report the `waVersion` in use so a persistent rejection can be diagnosed.
 - **`alert`** (and, on deauth/pairing/replaced/gave-up events, the server automatically) POSTs to `WHATSUP_ALERT_WEBHOOK_URL` — point it at Pushover / ntfy / Slack / an email relay / a phone push so you're reachable when the channel is down.
 - **`WHATSUP_AUTO_REPAIR=true`** (with `WHATSUP_PAIR_PHONE` set) makes a genuine deauth auto-issue a pairing code and push it out-of-band, so the operator can re-link from their phone without touching the host.
 - **`health`** returns a one-call send-path + receive-path + auth report.
@@ -95,8 +96,10 @@ Phone numbers are E.164 (country code, `+` prefix). Restart Claude Code so the M
 | `status` | Connection state, phone, pushName, QR path / pending `pairingCode`, recovery flags (`needsRepair`, `deauthRisk`, `replacedByOtherInstance`, `replacedCode`), reconnect diagnostics, `lastHistorySync`, `alertChannelConfigured`, and this session's `role` (`owner`/`proxy`) + `ownerPid`. |
 | `reconnect` | Force a fresh WhatsApp socket (optional `force`). Safe for ordinary drops and `replacedCode: 440`; **refuses** `replacedCode: 401` (deauth risk) unless forced. |
 | `pair_request` | Link with an 8-char phone pairing code (no QR/GUI). Optional `phone`, locked to `WHATSUP_PAIR_PHONE` when set. |
-| `pair_status` | Poll an in-progress pairing (current code, creds, connection state). |
+| `pair_status` | Poll an in-progress pairing (current code, creds, connection state, `lastPairError`). |
+| `qr_request` | Fallback: bring up a fresh, rotating QR at `qrCodeFile` when phone-code pairing fails. |
 | `restore_credentials` | Self-heal a spurious deauth from the newest credential backup, then reconnect. |
+| `reset_credentials` | Clean slate for re-pairing (back up a real session / delete leftovers). No deauth risk. |
 | `health` | One-call send-path + receive-path + auth health. Read-only. |
 | `alert` | Send `text` to the operator over the WhatsApp-independent webhook. |
 | `subscribe` / `unsubscribe` | Opt this session in/out of live inbound message delivery. Call `subscribe` once after `status` if this agent handles WhatsApp; survives owner handoff. |

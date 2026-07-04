@@ -27,7 +27,9 @@ import {
   cleanupQrCode,
   backupCredentials,
   restoreCredentials,
+  clearCredentials,
   hasCredentials,
+  credsAreRegistered,
   type AuthState,
 } from "./auth.js";
 import { getGlobalLogger, audit } from "./logger.js";
@@ -117,17 +119,22 @@ export class WhatsAppManager {
     // 1. Initialize auth state
     this.authState = await initAuthState(this.config);
 
-    // 2. Fetch latest Baileys version (best-effort, falls back to bundled)
+    // 2. Fetch latest Baileys version (best-effort, falls back to bundled).
+    // Record which WA-web version we actually used — a wrong/stale version is
+    // the classic cause of a 401 at registration/pairing, so surface it.
     let version: [number, number, number] | undefined;
+    let versionSource: "fetched" | "bundled" = "bundled";
     try {
       const versionResult = await fetchLatestBaileysVersion();
       if (!versionResult.error) {
         version = versionResult.version;
+        versionSource = "fetched";
         logger.info("Using Baileys version", { version: version.join("."), isLatest: versionResult.isLatest });
       }
     } catch {
       logger.warn("Could not fetch latest Baileys version, using bundled");
     }
+    this.connectionStatus.waVersion = version ? `${version.join(".")} (${versionSource})` : "bundled";
 
     // 3. Create a silent pino logger to suppress Baileys internal logging
     const baileysLogger = pino({ level: "silent" }) as any;
@@ -170,12 +177,15 @@ export class WhatsAppManager {
     }
 
     if (this.sock) {
+      // Null first (see forceReconnect) so the synchronous close from end()
+      // is ignored by the connection.update guard and doesn't auto-reconnect.
+      const old = this.sock;
+      this.sock = null;
       try {
-        this.sock.end(undefined);
+        old.end(undefined);
       } catch {
         // Ignore close errors
       }
-      this.sock = null;
     }
 
     this.connectionStatus = {
@@ -322,12 +332,17 @@ export class WhatsAppManager {
     }
 
     if (this.sock) {
+      // Null this.sock BEFORE end(): Baileys emits `close` synchronously from
+      // end(), and the connection.update guard keys off `this.sock !== boundSock`.
+      // If we nulled it after, the guard would still see the old socket and let
+      // its close schedule a reconnect that clobbers the next (pairing) socket.
+      const old = this.sock;
+      this.sock = null;
       try {
-        this.sock.end(undefined);
+        old.end(undefined);
       } catch {
         // ignore
       }
-      this.sock = null;
     }
 
     this.reconnectAttempts = 0;
@@ -351,32 +366,88 @@ export class WhatsAppManager {
   }
 
   /**
-   * Begin a phone-number pairing (P0-#1). Moves any existing credentials aside
-   * (recoverable via restore_credentials), then brings up a fresh unregistered
-   * socket; the next `qr` event issues an 8-char pairing code for `phone`
-   * instead of a QR PNG. Returns the backup path if creds were moved.
+   * Prepare an UNREGISTERED auth dir for a fresh pairing/QR attempt.
+   * A REGISTERED session is backed up (recoverable via restore_credentials);
+   * half-written pairing leftovers (creds.json with `registered: false`, left
+   * behind by a prior requestPairingCode) are just deleted — nothing worth
+   * keeping. This stops the auth.bak churn on repeated pair attempts.
    */
-  async startPairing(phone: string): Promise<{ backedUp: string | null }> {
-    const digits = phone.replace(/[^\d]/g, "");
-    if (!digits) throw new Error("A phone number (digits) is required to pair");
-
+  private async prepareCleanAuthDir(): Promise<{ backedUp: string | null; cleared: boolean }> {
     let backedUp: string | null = null;
-    // Pairing requires an UNREGISTERED auth dir, or Baileys resumes the old
-    // session and never emits a fresh pairing challenge.
+    let cleared = false;
     if (hasCredentials(this.config.authDir)) {
-      backedUp = await backupCredentials(this.config.authDir);
+      if (credsAreRegistered(this.config.authDir)) {
+        backedUp = await backupCredentials(this.config.authDir);
+      } else {
+        await clearCredentials(this.config.authDir);
+        cleared = true;
+      }
     }
+    return { backedUp, cleared };
+  }
 
-    this.pendingPairPhone = digits;
+  /**
+   * Reset all pairing/repair status flags to a clean not-yet-paired baseline.
+   * Shared by the pairing, QR, and reset entry points.
+   */
+  private clearPairingState(): void {
     this.pairingRequested = false;
     this.connectionStatus.pairingCode = undefined;
     this.connectionStatus.pairingCodeExpiresAt = undefined;
+    this.connectionStatus.pairingPhone = undefined;
+    this.connectionStatus.lastPairError = undefined;
+    this.connectionStatus.needsRepair = false;
+    this.connectionStatus.deauthRisk = undefined;
+    this.connectionStatus.qrGeneratedAt = undefined;
+  }
+
+  /**
+   * Begin a phone-number pairing (P0-#1). Cleans the auth dir first (see
+   * prepareCleanAuthDir), then brings up a fresh unregistered socket; the next
+   * `qr` event issues an 8-char pairing code for `phone` instead of a QR PNG.
+   */
+  async startPairing(phone: string): Promise<{ backedUp: string | null; cleared: boolean }> {
+    const digits = phone.replace(/[^\d]/g, "");
+    if (!digits) throw new Error("A phone number (digits) is required to pair");
+
+    const prep = await this.prepareCleanAuthDir();
+    this.clearPairingState();
+    this.pendingPairPhone = digits;
     this.connectionStatus.pairingPhone = digits;
-    this.connectionStatus.needsRepair = true;
-    audit("pairing_started", { phone: digits, backedUp });
+    audit("pairing_started", { phone: digits, ...prep });
 
     await this.forceReconnect();
-    return { backedUp };
+    return prep;
+  }
+
+  /**
+   * Bring up a pure QR-pairing socket (no phone code). WhatsApp stops rotating
+   * QR refs once a pairing code is requested, so this is how to get a fresh,
+   * rotating QR back after a failed code attempt. The qr handler re-saves the
+   * PNG on every rotation and stamps qrGeneratedAt.
+   */
+  async startQrPairing(): Promise<{ backedUp: string | null; cleared: boolean }> {
+    const prep = await this.prepareCleanAuthDir();
+    this.clearPairingState();
+    this.pendingPairPhone = null;
+    audit("qr_pairing_started", { ...prep });
+    await this.forceReconnect();
+    return prep;
+  }
+
+  /**
+   * Clean-slate reset: back up a registered session (or delete unregistered
+   * leftovers), clear all pairing/repair state, and bring up a fresh
+   * unregistered socket ready for pair_request / qr_request. No deauth risk —
+   * a registered session is preserved as a backup, never destroyed.
+   */
+  async resetCredentials(): Promise<{ backedUp: string | null; cleared: boolean }> {
+    const prep = await this.prepareCleanAuthDir();
+    this.clearPairingState();
+    this.pendingPairPhone = null;
+    audit("credentials_reset", { ...prep });
+    await this.forceReconnect();
+    return prep;
   }
 
   /**
@@ -485,6 +556,55 @@ export class WhatsAppManager {
   }
 
   /**
+   * Handle a 401 that arrives while a pairing is in progress. This is the
+   * server REJECTING the pairing attempt (bad/expired code, stale/version
+   * mismatch) — NOT a deauth of an established link. So we do not set
+   * needsRepair; we record lastPairError, wipe the half-written pairing
+   * leftovers so the next attempt starts clean, and tell the operator to
+   * request a new code or fall back to a QR.
+   */
+  private async onPairingRejected(code: number | string, reason: string): Promise<void> {
+    const logger = getGlobalLogger();
+    const wasPhone = this.pendingPairPhone;
+    this.pendingPairPhone = null;
+    this.pairingRequested = false;
+    this.connectionStatus.authenticated = false;
+    this.connectionStatus.connected = false;
+    this.connectionStatus.pairingCode = undefined;
+    this.connectionStatus.pairingCodeExpiresAt = undefined;
+    this.connectionStatus.lastPairError = `${reason} (${code})`;
+
+    // The creds.json written by requestPairingCode is unregistered leftovers —
+    // clear it so the next pair_request/qr_request is a clean slate.
+    try {
+      await clearCredentials(this.config.authDir);
+    } catch (err: any) {
+      logger.warn("Failed to clear pairing leftovers", { error: err?.message });
+    }
+
+    logger.warn("Pairing attempt rejected by WhatsApp", {
+      code,
+      reason,
+      waVersion: this.connectionStatus.waVersion,
+    });
+    audit("pairing_rejected", { code, reason, waVersion: this.connectionStatus.waVersion });
+
+    this.emitSystem({
+      kind: "deauth",
+      alert: true,
+      content: [
+        `WhatsApp pairing attempt was rejected (${reason}, ${code}).`,
+        wasPhone ? `The code may have expired or been mistyped.` : ``,
+        `Request a fresh code with pair_request, or try qr_request for a rotating QR.`,
+        `If it keeps failing, the WA client version (${this.connectionStatus.waVersion ?? "unknown"}) may be stale.`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      data: { code, reason, waVersion: this.connectionStatus.waVersion },
+    });
+  }
+
+  /**
    * Resolve a JID to a phone-based JID if possible.
    * Converts @lid JIDs to @s.whatsapp.net using the contact cache.
    * Returns the original JID if no mapping is found.
@@ -558,9 +678,17 @@ export class WhatsAppManager {
 
     const logger = getGlobalLogger();
     const ev = this.sock.ev;
+    // The socket these handlers belong to. When we intentionally tear a socket
+    // down (forceReconnect/startPairing/disconnect), its async `close` event
+    // still fires later — but by then `this.sock` points at the NEW socket.
+    // Ignoring connection.update from a superseded socket prevents that stale
+    // close from scheduling a reconnect that clobbers the new (e.g. pairing)
+    // socket — the bug that made phone pairing fail with a 401.
+    const boundSock = this.sock;
 
     // --- connection.update ---
     ev.on("connection.update", async (update) => {
+      if (this.sock !== boundSock) return;
       const { connection, lastDisconnect, qr } = update;
 
       // QR / pairing challenge received. The `qr` event fires exactly when the
@@ -614,26 +742,34 @@ export class WhatsAppManager {
           return;
         }
 
-        logger.info("QR code received, scan to authenticate");
-        audit("qr_received", {});
+        // WhatsApp rotates the QR every ~20s and Baileys re-emits it each time.
+        // Re-save the PNG on every rotation (so the on-disk file stays valid)
+        // and stamp qrGeneratedAt, but only alert on the FIRST QR so we don't
+        // spam the channel/webhook on each rotation.
+        const firstQr = this.connectionStatus.qrGeneratedAt === undefined;
+        logger.info("QR code received, scan to authenticate", { rotation: !firstQr });
+        if (firstQr) audit("qr_received", {});
 
         try {
           await saveQrCode(qr, this.config.qrCodeFile);
+          this.connectionStatus.qrGeneratedAt = Date.now();
         } catch (err: any) {
           logger.error("Failed to save QR code file", { error: err?.message });
         }
 
-        this.emitSystem({
-          kind: "qr",
-          alert: true,
-          content: [
-            `WhatsApp pairing required. QR written to ${this.config.qrCodeFile}.`,
-            this.config.pairPhone
-              ? `No GUI? Call pair_request for a phone pairing code instead.`
-              : `No GUI? Call pair_request({ phone: "<your number>" }) for a code instead.`,
-          ].join("\n"),
-          data: { qrCodeFile: this.config.qrCodeFile },
-        });
+        if (firstQr) {
+          this.emitSystem({
+            kind: "qr",
+            alert: true,
+            content: [
+              `WhatsApp pairing required. QR written to ${this.config.qrCodeFile} (rotates every ~20s).`,
+              this.config.pairPhone
+                ? `No GUI? Call pair_request for a phone pairing code instead.`
+                : `No GUI? Call pair_request({ phone: "<your number>" }) for a code instead.`,
+            ].join("\n"),
+            data: { qrCodeFile: this.config.qrCodeFile },
+          });
+        }
 
         // Invoke the callback so callers can handle QR display
         if (this.qrHandler) {
@@ -674,6 +810,8 @@ export class WhatsAppManager {
         this.connectionStatus.pairingCode = undefined;
         this.connectionStatus.pairingCodeExpiresAt = undefined;
         this.connectionStatus.pairingPhone = undefined;
+        this.connectionStatus.lastPairError = undefined;
+        this.connectionStatus.qrGeneratedAt = undefined;
 
         // Extract user info from the socket
         if (this.sock?.user) {
@@ -723,7 +861,19 @@ export class WhatsAppManager {
         });
         audit("connection_close", { statusCode, error: errorMessage });
 
-        if (statusCode === DisconnectReason.loggedOut) {
+        // A 401 while a pairing is IN PROGRESS (we issued a code / are showing
+        // a fresh-pair QR and no registered creds exist yet) is the server
+        // rejecting the pairing attempt — NOT a deauth of an established link.
+        // Handle it as a pairing failure so we don't set needsRepair or churn
+        // backups; onPairingRejected clears the leftovers and asks for a retry.
+        const pairingInProgress = this.pendingPairPhone !== null;
+        if (
+          statusCode === DisconnectReason.loggedOut &&
+          pairingInProgress &&
+          !credsAreRegistered(this.config.authDir)
+        ) {
+          await this.onPairingRejected(statusCode, errorMessage);
+        } else if (statusCode === DisconnectReason.loggedOut) {
           // Baileys/WhatsApp maps any 401 to DisconnectReason.loggedOut, but
           // the wire-level reason string distinguishes two semantically
           // different events:

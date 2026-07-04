@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync, chmodSync, statSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync, chmodSync, statSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { useMultiFileAuthState } from "baileys";
 import QRCode from "qrcode";
@@ -98,6 +98,23 @@ export function cleanupQrCode(filePath: string): void {
 export function hasCredentials(authDir: string): boolean {
   try {
     return existsSync(join(authDir, "creds.json"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether creds.json represents a COMPLETED pairing (registered === true), vs
+ * half-written pairing leftovers (a `requestPairingCode` call writes creds.json
+ * with `me`/`pairingCode` but `registered: false`). Lets the pairing flow clear
+ * useless leftovers instead of backing them up on every retry.
+ */
+export function credsAreRegistered(authDir: string): boolean {
+  try {
+    const p = join(authDir, "creds.json");
+    if (!existsSync(p)) return false;
+    const parsed = JSON.parse(readFileSync(p, "utf-8"));
+    return parsed?.registered === true;
   } catch {
     return false;
   }

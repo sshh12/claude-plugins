@@ -153,13 +153,25 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "pair_status",
     description:
-      "Check an in-progress phone pairing: returns the current pairingCode (if any), whether credentials now exist, and connection state. Poll after pair_request until connected=true.",
+      "Check an in-progress phone pairing: returns the current pairingCode (if any), whether credentials now exist, connection state, and lastPairError if the previous attempt was rejected. Poll after pair_request until connected=true.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "qr_request",
+    description:
+      "Bring up a fresh, rotating QR for scanning (fallback when phone-code pairing fails). WhatsApp stops rotating the QR once a pairing code is requested, so use this to get a live QR back. Writes to qrCodeFile and keeps it refreshed (~every 20s); status reports qrGeneratedAt/qrAgeSec so you can tell it's fresh.",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "restore_credentials",
     description:
       "Self-heal a spurious deauth: restore the most recent credential backup and reconnect. No-op if live credentials are already present. Try this before pair_request when a drop may have been spurious.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "reset_credentials",
+    description:
+      "Clean slate for pairing: back up a completed session (or delete half-finished pairing leftovers) and bring up a fresh unregistered socket, ready for pair_request or qr_request. No deauth risk — a real session is preserved as a backup, never destroyed. Use when pairing is stuck in a failure loop.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -411,8 +423,12 @@ export async function callTool(
       return callPairRequest(ctx, args);
     case "pair_status":
       return callPairStatus(ctx);
+    case "qr_request":
+      return callQrRequest(ctx);
     case "restore_credentials":
       return callRestore(ctx);
+    case "reset_credentials":
+      return callReset(ctx);
     case "health":
       return callHealth(ctx);
     case "alert":
@@ -649,9 +665,11 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
     diagnosis = `pairing code issued (${status.pairingCode}) — enter it on your phone under Linked Devices → Link with phone number`;
   } else if (ready) {
     diagnosis = "connected and ready";
+  } else if (status.lastPairError && !creds) {
+    diagnosis = `last pairing attempt rejected (${status.lastPairError}) — retry pair_request for a fresh code, or qr_request to scan a QR`;
   } else if (!creds) {
     diagnosis =
-      "no credentials — call pair_request for a phone pairing code (no QR/GUI), or scan the QR file";
+      "no credentials — call pair_request for a phone pairing code (no QR/GUI), or qr_request to scan a QR";
   } else if (status.replacedByOtherInstance) {
     diagnosis =
       status.replacedCode === 401
@@ -686,9 +704,16 @@ async function callStatus(ctx: ToolCtx): Promise<ApiResponse> {
     pushName: status.pushName,
     hasCredentials: creds,
     qrCodeFile: creds ? undefined : ctx.config.qrCodeFile,
+    qrGeneratedAt: status.qrGeneratedAt,
+    qrAgeSec:
+      status.qrGeneratedAt !== undefined
+        ? Math.round((Date.now() - status.qrGeneratedAt) / 1000)
+        : undefined,
     pairingCode: status.pairingCode,
     pairingPhone: status.pairingPhone,
     pairingCodeExpiresAt: status.pairingCodeExpiresAt,
+    lastPairError: status.lastPairError,
+    waVersion: status.waVersion,
     needsRepair: status.needsRepair ?? false,
     deauthRisk: status.deauthRisk,
     lastConnected: status.lastConnected,
@@ -770,6 +795,7 @@ async function waitForPairingCode(
   for (;;) {
     const s = wa.getStatus();
     if (s.pairingCode) return s.pairingCode;
+    if (s.lastPairError) return undefined; // attempt was rejected fast
     if (s.connected && s.authenticated) return undefined; // already paired
     if (Date.now() >= deadline) return wa.getStatus().pairingCode;
     await new Promise((r) => setTimeout(r, 400));
@@ -817,15 +843,27 @@ async function callPairRequest(ctx: ToolCtx, args: any): Promise<ApiResponse> {
 
   audit("pair_request", { phone });
   try {
-    const { backedUp } = await ctx.wa.startPairing(phone);
+    const { backedUp, cleared } = await ctx.wa.startPairing(phone);
     const code = await waitForPairingCode(ctx.wa, 12_000);
+    const s = ctx.wa.getStatus();
     if (code) {
       return {
         ok: true,
         pairingCode: code,
         phone,
         backedUp,
+        cleared,
+        waVersion: s.waVersion,
         hint: `Enter ${code} in WhatsApp → Settings → Linked Devices → Link a Device → "Link with phone number instead". Then poll pair_status until connected=true.`,
+      };
+    }
+    if (s.lastPairError) {
+      return {
+        ok: false,
+        error: `Pairing was rejected by WhatsApp: ${s.lastPairError}`,
+        code: ErrorCode.PAIRING_FAILED,
+        waVersion: s.waVersion,
+        hint: "Retry pair_request for a fresh code, or qr_request to scan a QR. If it keeps failing, the WA client version may be stale — report the waVersion.",
       };
     }
     return {
@@ -833,6 +871,8 @@ async function callPairRequest(ctx: ToolCtx, args: any): Promise<ApiResponse> {
       pairingCode: undefined,
       phone,
       backedUp,
+      cleared,
+      waVersion: s.waVersion,
       message: "Pairing started but no code yet — call pair_status shortly.",
       hint: "If no code appears within ~30s, check the whatsup log; the number may be invalid.",
     };
@@ -859,13 +899,17 @@ async function callPairStatus(ctx: ToolCtx): Promise<ApiResponse> {
     pairingPhone: s.pairingPhone,
     pairingCodeExpiresAt: s.pairingCodeExpiresAt,
     needsRepair: s.needsRepair ?? false,
+    lastPairError: s.lastPairError,
+    waVersion: s.waVersion,
     diagnosis: ready
       ? "paired and connected"
       : s.pairingCode
         ? "code issued — enter it on your phone under Linked Devices → Link with phone number"
-        : creds
-          ? "credentials present — connecting"
-          : "no code yet — call pair_request",
+        : s.lastPairError
+          ? `last pairing attempt rejected (${s.lastPairError}) — retry pair_request or try qr_request`
+          : creds
+            ? "credentials present — connecting"
+            : "no code yet — call pair_request",
   };
 }
 
@@ -914,6 +958,72 @@ async function callRestore(ctx: ToolCtx): Promise<ApiResponse> {
   }
 }
 
+async function callQrRequest(ctx: ToolCtx): Promise<ApiResponse> {
+  const disabled = checkDisabled("qr_request", ctx.config);
+  if (disabled) return disabled;
+
+  if (ctx.wa.isReady()) {
+    return {
+      ok: false,
+      error: "Already connected and paired — no QR needed.",
+      code: ErrorCode.INVALID_ARGUMENT,
+      status: ctx.wa.getStatus(),
+    };
+  }
+  try {
+    const { backedUp, cleared } = await ctx.wa.startQrPairing();
+    // Give the socket a moment to emit the first QR.
+    const deadline = Date.now() + 12_000;
+    while (Date.now() < deadline) {
+      if (ctx.wa.getStatus().qrGeneratedAt) break;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    const s = ctx.wa.getStatus();
+    return {
+      ok: true,
+      qrCodeFile: ctx.config.qrCodeFile,
+      qrGeneratedAt: s.qrGeneratedAt,
+      backedUp,
+      cleared,
+      waVersion: s.waVersion,
+      message: s.qrGeneratedAt
+        ? "Fresh QR written. It refreshes every ~20s while unpaired; open the file and scan promptly."
+        : "QR mode started but no QR yet — call status shortly for qrGeneratedAt.",
+      hint: `Open ${ctx.config.qrCodeFile} and scan under WhatsApp → Settings → Linked Devices → Link a Device.`,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: `QR request failed: ${err?.message ?? String(err)}`,
+      code: ErrorCode.PAIRING_FAILED,
+    };
+  }
+}
+
+async function callReset(ctx: ToolCtx): Promise<ApiResponse> {
+  const disabled = checkDisabled("reset_credentials", ctx.config);
+  if (disabled) return disabled;
+  try {
+    const { backedUp, cleared } = await ctx.wa.resetCredentials();
+    return {
+      ok: true,
+      backedUp,
+      cleared,
+      message:
+        "Credentials reset to a clean slate; a fresh unregistered socket is coming up. Call pair_request (phone code) or qr_request (QR) to link.",
+      hint: backedUp
+        ? `A completed session was preserved at ${backedUp} — restore_credentials brings it back.`
+        : undefined,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: `Reset failed: ${err?.message ?? String(err)}`,
+      code: ErrorCode.SOCKET_ERROR,
+    };
+  }
+}
+
 async function callHealth(ctx: ToolCtx): Promise<ApiResponse> {
   const s = ctx.wa.getStatus();
   const ready = ctx.wa.isReady();
@@ -954,8 +1064,15 @@ async function callHealth(ctx: ToolCtx): Promise<ApiResponse> {
     hasCredentials: creds,
     needsRepair: s.needsRepair ?? false,
     deauthRisk: s.deauthRisk,
+    lastPairError: s.lastPairError,
+    waVersion: s.waVersion,
     replacedByOtherInstance: s.replacedByOtherInstance ?? false,
     pairingPending: !!s.pairingCode,
+    qrGeneratedAt: s.qrGeneratedAt,
+    qrAgeSec:
+      s.qrGeneratedAt !== undefined
+        ? Math.round((Date.now() - s.qrGeneratedAt) / 1000)
+        : undefined,
     lastConnected: s.lastConnected,
     lastDisconnected: s.lastDisconnected,
     lastDisconnectReason: s.lastDisconnectReason,

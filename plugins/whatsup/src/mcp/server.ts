@@ -23,7 +23,7 @@ const SERVER_INSTRUCTIONS = [
   "",
   "One background-resident session owns the single WhatsApp connection; every other session proxies to it transparently, so multiple agents can run concurrently without conflict.",
   "",
-  "On session start, call the `status` tool once to verify the connection and surface any pending pairing. If the device is not paired, prefer `pair_request` — it returns an 8-character phone pairing code the user enters under WhatsApp → Settings → Linked Devices → Link a Device → \"Link with phone number instead\". No QR image or GUI is needed. (A QR file is still written to qrCodeFile as a fallback.)",
+  "On session start, call the `status` tool once to verify the connection and surface any pending pairing. If the device is not paired, prefer `pair_request` — it returns an 8-character phone pairing code the user enters under WhatsApp → Settings → Linked Devices → Link a Device → \"Link with phone number instead\". No QR image or GUI is needed. If phone-code pairing keeps failing (status shows lastPairError / a repeated 401), fall back to `qr_request` (fresh rotating QR), and use `reset_credentials` to clear a stuck pairing loop. Report `waVersion` if pairing keeps being rejected — a stale WA version is a common cause.",
   "",
   "Recovery: if status shows needsRepair or replacedByOtherInstance with replacedCode=401, do NOT call `reconnect` — it can trigger a full credential deauth. Call `restore_credentials` first (self-heals a spurious drop), and `pair_request` if that fails. `reconnect` is only for ordinary drops and 440 replacedCode.",
   "",
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
   audit("mcp_start", { pid: process.pid });
 
   const mcp = new Server(
-    { name: "whatsup", version: "0.5.0" },
+    { name: "whatsup", version: "0.5.1" },
     {
       capabilities: { tools: {}, experimental: { "claude/channel": {} } },
       instructions: SERVER_INSTRUCTIONS,

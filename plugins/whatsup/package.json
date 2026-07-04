@@ -1,6 +1,6 @@
 {
   "name": "whatsup",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "WhatsApp MCP server for Claude Code via Baileys WebSocket client",
   "scripts": {
@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "baileys": "^6.7.21",
+    "baileys": "^6.7.23",
     "qrcode": "^1.5.4",
     "zod": "^3.23.0"
   },
